@@ -1,0 +1,27 @@
+# Data: never commit raw or generated data
+data/raw/*
+data/interim/*
+data/processed/*
+!data/**/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Secrets and local settings
+.env
+*.pem
+
+# Model artefacts and OS files
+*.joblib
+*.pkl
+.DS_Store
+Thumbs.db
