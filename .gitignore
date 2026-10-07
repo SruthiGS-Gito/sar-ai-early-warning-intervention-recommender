@@ -25,3 +25,6 @@ venv/
 *.pkl
 .DS_Store
 Thumbs.db
+
+# Project virtual environment
+.sar-env/
