@@ -23,9 +23,9 @@ Open University Learning Analytics Dataset (OULAD). Reference: Kuzilek, Hlosta a
 ```
 git clone https://github.com/SruthiGS-Gito/sar-ai-early-warning-intervention-recommender.git
 cd sar-ai-early-warning-intervention-recommender
-python -m venv .venv
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # macOS or Linux
+python -m venv .sar-env
+.sar-env\Scripts\activate          # Windows
+# source .sar-env/bin/activate     # macOS or Linux
 pip install -r requirements.txt
 pip install -e .
 pytest
