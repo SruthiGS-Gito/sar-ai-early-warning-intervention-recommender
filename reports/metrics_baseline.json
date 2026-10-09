@@ -1,0 +1,59 @@
+{
+  "cutoff_day": 30,
+  "population": 27466,
+  "at_risk_share": 0.43985290905119057,
+  "features": [
+    "code_module",
+    "total_clicks",
+    "active_days",
+    "avg_clicks_per_active_day",
+    "clicks_last_7d",
+    "clicks_prev_7d",
+    "click_trend",
+    "first_active_day",
+    "n_submitted",
+    "mean_score",
+    "mean_delay_days",
+    "n_late",
+    "weighted_score",
+    "score_trend",
+    "n_assessments_due",
+    "n_missed",
+    "reg_lead_days",
+    "registered_late",
+    "registered_after_cutoff",
+    "reg_date_missing",
+    "max_consecutive_inactive_days",
+    "trailing_inactive_days",
+    "gender",
+    "region",
+    "highest_education",
+    "imd_band",
+    "age_band",
+    "num_of_prev_attempts",
+    "studied_credits",
+    "disability"
+  ],
+  "overlap": {
+    "train rows": 18263,
+    "validation rows": 9203,
+    "students in both": 1258,
+    "train rows removed from overlap": 1348
+  },
+  "train": 16915,
+  "validation": 9203,
+  "validation_metrics": {
+    "recall": 0.6260010678056593,
+    "precision": 0.6320754716981132,
+    "pr_auc": 0.6247596436355766,
+    "roc_auc": 0.7329225206905692,
+    "confusion_matrix": {
+      "tn": 4092,
+      "fp": 1365,
+      "fn": 1401,
+      "tp": 2345
+    },
+    "positive_rate": 0.4070411822231881,
+    "n": 9203
+  }
+}
