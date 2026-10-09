@@ -31,6 +31,14 @@ pip install -e .
 pytest
 ```
 
+## How to run
+
+1. `pip install -r requirements.txt`
+2. Put the seven OULAD CSV files in `data/raw/`.
+3. `python scripts/make_interim.py` checks the join keys and writes cleaned tables to `data/interim/`.
+4. `python scripts/run_baseline.py` builds the Day 30 feature matrix in `data/processed/`, trains the baseline model and writes `reports/metrics_baseline.json`.
+5. `pytest -q`
+
 ## Structure
 
 - `src/sar/`: project code as an installable package
@@ -39,6 +47,7 @@ pytest
   - `features/`: engagement, assessment, registration features
   - `models/`: baseline model
   - `viz/`: shared chart helpers
+- `scripts/`: command-line entry points for the pipeline
 - `notebooks/`: exploration and charts (see `notebooks/README.md`)
 - `tests/`: automated checks, including the leakage test
 - `docs/`: decisions and checklists for review

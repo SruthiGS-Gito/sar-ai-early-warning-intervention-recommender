@@ -28,3 +28,6 @@ Thumbs.db
 
 # Project virtual environment
 .sar-env/
+
+# Archives
+*.zip
