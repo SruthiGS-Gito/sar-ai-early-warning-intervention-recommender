@@ -1,10 +1,11 @@
-"""PROVISIONAL Random Forest for the Day 30 at-risk model (stand-in until SCRUM-186 / ticket 214).
+"""PROVISIONAL Random Forest and threshold for the Day 30 at-risk model.
 
-The team model (ticket 212) exists only as a notebook, with no saved model or threshold.
+The team model (tickets 212 and 217, SCRUM-184 and SCRUM-185) exists only as a notebook, with no saved
+model file, and the decision threshold (ticket 214, SCRUM-186) is not in the repo yet.
 This module retrains its tuned settings (RandomizedSearchCV result, cell 69 of
 notebooks/xgboost-random-forest (2).ipynb, commit c4c3ba6) on the repo's Day 30 feature
 matrix, so explanations (SCRUM-187) and recommendations (SCRUM-188) have a model to use.
-Replace it when the reviewed model from ticket 214 lands.
+Replace the model when 212/217 deliver a saved model, and the threshold when 214 lands.
 
 Leakage rules:
   * the model is fitted on the training presentations only (sar.data.split.make_split)

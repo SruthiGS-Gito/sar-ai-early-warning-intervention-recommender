@@ -24,7 +24,7 @@ plot_explanation(expl)     # matplotlib Figure
 Worked example: `notebooks/215_SGS_shap_explanations.ipynb`. It shows aggregates and a synthetic student only.
 
 ## Model: PROVISIONAL
-The model is a Random Forest with the tuned settings from ticket 212 (cell 69 of `notebooks/xgboost-random-forest (2).ipynb`, commit c4c3ba6). It is retrained on the training presentations (2013B, 2013J, 2014B) by `scripts/train_forest.py`. It is a stand-in until ticket 214 (SCRUM-186) delivers the reviewed model and threshold, and every chart and document says so.
+The model is a Random Forest with the tuned settings from tickets 212 and 217 (SCRUM-184, SCRUM-185; cell 69 of `notebooks/xgboost-random-forest (2).ipynb`, commit c4c3ba6). It is retrained on the training presentations (2013B, 2013J, 2014B) by `scripts/train_forest.py`. It is a stand-in until the team model (212, 217) and the decision threshold (214, SCRUM-186) are in the repo, and every chart and document says so.
 
 - **Threshold:** the highest out-of-fold threshold that reaches 80% recall, using GroupKFold with one fold per training presentation. 2014J is never used to choose it. Current value 0.404.
 - **2014J at the threshold:** recall 0.781, precision 0.566, 56% of students flagged.
@@ -51,7 +51,7 @@ Sentence rules:
 
 ## Assumptions and limits
 - The score ranks risk; it is not a probability. With balanced class weights, the starting score is 0.50, not the at-risk rate.
-- Background factors never appear as reasons, but the model still uses them. On a sample of 500 2014J students they make up about 18% of all score movement, and highest education is the second largest input. Whether to keep them as model inputs is for ticket 214 to decide.
+- Background factors never appear as reasons, but the model still uses them. On a sample of 500 2014J students they make up about 18% of all score movement, and highest education is the second largest input. Whether to keep them as model inputs is for the team model (tickets 212 and 217) to decide.
 - Contributions describe how the model reaches its score. They do not say what caused an outcome or what would change it.
 - SHAP splits credit between related inputs, so a single input can look smaller than the idea it shares.
 - The threshold folds are not strictly time-ordered: 2013B is scored by a model trained on later training presentations.
