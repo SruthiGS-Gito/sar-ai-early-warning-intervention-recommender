@@ -11,6 +11,8 @@ RAW_DIR = DATA_DIR / "raw"
 INTERIM_DIR = DATA_DIR / "interim"
 PROCESSED_DIR = DATA_DIR / "processed"
 FIGURES_DIR = PROJECT_ROOT / "reports" / "figures"
+# Trained model files. Git-ignored: rebuild them with scripts/train_forest.py.
+MODELS_DIR = PROJECT_ROOT / "models"
 
 OULAD_TABLES = (
     "assessments",

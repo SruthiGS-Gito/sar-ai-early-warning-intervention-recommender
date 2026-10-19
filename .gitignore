@@ -21,6 +21,7 @@ venv/
 *.pem
 
 # Model artefacts and OS files
+/models/
 *.joblib
 *.pkl
 .DS_Store
