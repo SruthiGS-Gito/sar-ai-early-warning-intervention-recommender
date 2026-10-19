@@ -1,0 +1,104 @@
+{
+  "provisional": true,
+  "status": "PROVISIONAL stand-in until ticket 214 (SCRUM-186) delivers the reviewed model",
+  "source": "tuned settings from notebooks/xgboost-random-forest (2).ipynb, cell 69, commit c4c3ba6",
+  "cutoff_day": 30,
+  "features": [
+    "code_module",
+    "total_clicks",
+    "active_days",
+    "avg_clicks_per_active_day",
+    "clicks_last_7d",
+    "clicks_prev_7d",
+    "click_trend",
+    "first_active_day",
+    "n_submitted",
+    "mean_score",
+    "mean_delay_days",
+    "n_late",
+    "weighted_score",
+    "score_trend",
+    "n_assessments_due",
+    "n_missed",
+    "reg_lead_days",
+    "registered_late",
+    "registered_after_cutoff",
+    "reg_date_missing",
+    "max_consecutive_inactive_days",
+    "trailing_inactive_days",
+    "gender",
+    "region",
+    "highest_education",
+    "imd_band",
+    "age_band",
+    "num_of_prev_attempts",
+    "studied_credits",
+    "disability"
+  ],
+  "background_features": [
+    "gender",
+    "region",
+    "highest_education",
+    "imd_band",
+    "age_band",
+    "disability"
+  ],
+  "params": {
+    "class_weight": "balanced_subsample",
+    "max_depth": null,
+    "max_features": "sqrt",
+    "min_samples_leaf": 5,
+    "min_samples_split": 20,
+    "n_estimators": 234
+  },
+  "train_presentations": [
+    "2013B",
+    "2013J",
+    "2014B"
+  ],
+  "validation_presentation": "2014J",
+  "train_rows": 16915,
+  "validation_rows": 9203,
+  "threshold": {
+    "threshold": 0.40377582938699796,
+    "recall_target": 0.8,
+    "oof_recall": 0.8000259538022321,
+    "oof_precision": 0.6256977570283162,
+    "oof_flagged_share": 0.582500738989063,
+    "folds": 3
+  },
+  "validation_at_threshold": {
+    "recall": 0.7808328884143086,
+    "precision": 0.5658734764944864,
+    "pr_auc": 0.7328448462265943,
+    "roc_auc": 0.7749586853917161,
+    "confusion_matrix": {
+      "tn": 3213,
+      "fp": 2244,
+      "fn": 821,
+      "tp": 2925
+    },
+    "positive_rate": 0.4070411822231881,
+    "n": 9203,
+    "flagged_share": 0.5616646745626426
+  },
+  "validation_at_0_5": {
+    "recall": 0.6332087560064068,
+    "precision": 0.6609083310114238,
+    "pr_auc": 0.7328448462265943,
+    "roc_auc": 0.7749586853917161,
+    "confusion_matrix": {
+      "tn": 4240,
+      "fp": 1217,
+      "fn": 1374,
+      "tp": 2372
+    },
+    "positive_rate": 0.4070411822231881,
+    "n": 9203
+  },
+  "versions": {
+    "scikit-learn": "1.9.1",
+    "pandas": "3.0.6",
+    "numpy": "2.5.3"
+  }
+}
