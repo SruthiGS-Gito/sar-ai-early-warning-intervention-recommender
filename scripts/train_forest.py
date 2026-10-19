@@ -1,6 +1,7 @@
 """SCRUM-187 (support): train the PROVISIONAL Random Forest and its threshold.
 
-Stand-in until the reviewed model from ticket 214 (SCRUM-186) is in the repo.
+Stand-in until the team model (tickets 212 and 217, SCRUM-184 and SCRUM-185) and the decision
+threshold (ticket 214, SCRUM-186) are in the repo.
 Run from the repo root, after scripts/run_baseline.py:  python scripts/train_forest.py
 Writes models/forest_provisional.joblib and models/forest_provisional.json (git-ignored)
 and reports/model_forest_provisional.json (aggregate metrics only, committed).
@@ -39,8 +40,9 @@ at_threshold = evaluate(model, val[features], val["at_risk"], threshold["thresho
 at_half = evaluate(model, val[features], val["at_risk"], 0.5)
 
 metadata = {
-    "status": "PROVISIONAL stand-in until ticket 214 (SCRUM-186) delivers the reviewed model",
-    "source": "tuned settings from notebooks/xgboost-random-forest (2).ipynb, cell 69, commit c4c3ba6",
+    "status": ("PROVISIONAL stand-in until the team model (tickets 212 and 217, SCRUM-184 and SCRUM-185) "
+               "and the decision threshold (ticket 214, SCRUM-186) are in the repo"),
+    "source": "tuned settings (tickets 212 and 217) from notebooks/xgboost-random-forest (2).ipynb, cell 69, commit c4c3ba6",
     "cutoff_day": CUTOFF_DAY,
     "features": features,
     "background_features": list(BACKGROUND),

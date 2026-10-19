@@ -1,7 +1,7 @@
 {
   "provisional": true,
-  "status": "PROVISIONAL stand-in until ticket 214 (SCRUM-186) delivers the reviewed model",
-  "source": "tuned settings from notebooks/xgboost-random-forest (2).ipynb, cell 69, commit c4c3ba6",
+  "status": "PROVISIONAL stand-in until the team model (tickets 212 and 217, SCRUM-184 and SCRUM-185) and the decision threshold (ticket 214, SCRUM-186) are in the repo",
+  "source": "tuned settings (tickets 212 and 217) from notebooks/xgboost-random-forest (2).ipynb, cell 69, commit c4c3ba6",
   "cutoff_day": 30,
   "features": [
     "code_module",

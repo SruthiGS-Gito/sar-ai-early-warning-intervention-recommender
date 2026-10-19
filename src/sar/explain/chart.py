@@ -80,7 +80,8 @@ def plot_explanation(expl, n: int = 8, save: bool = False, name: str = "student_
     caption = (f"Bars start from the model's starting score ({expl.base_score:.2f}, set in training) and add "
                "up to this student's score. The score ranks risk; it is not a probability.")
     if provisional:
-        caption += " PROVISIONAL model until ticket 214 delivers the reviewed one."
+        caption += (" PROVISIONAL model and threshold until the team model (SCRUM-184, SCRUM-185) and "
+                    "decision threshold (SCRUM-186) are in the repo.")
     fig.text(0.02, -0.01, caption, ha="left", va="top", fontsize=8, color=NEUTRAL, wrap=True)
     if save:
         save_fig(fig, name, out_dir)
