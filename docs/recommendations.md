@@ -39,4 +39,4 @@ The mapping is an assumption for staff to review and edit. It is not learned fro
 - **Mapping effects.** Weekly check-ins and peer tutoring come up often, because many activity inputs map to them. Financial aid referral is rare.
 - **Indirect background influence.** Background factors never drive a suggestion directly, but the model uses them, and in tree models an input can change how much the other inputs contribute.
 - **Hidden medians.** About 15% of suggestions show no medians, because one outcome group is too small.
-- **Provisional model.** Built on the provisional model until ticket 214. Each suggestion takes about 0.25 s per student, including the SHAP explanation.
+- **Provisional model.** Built on the provisional model and threshold until the team model (tickets 212 and 217) and the decision threshold (ticket 214) are in the repo. Each suggestion takes about 0.25 s per student, including the SHAP explanation.
