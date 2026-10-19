@@ -42,8 +42,9 @@ from sar.service.views import (  # noqa: E402
 )
 from sar.viz.plots import AT_RISK, ON_TRACK  # noqa: E402
 
-PROVISIONAL = ("**PROVISIONAL model.** A stand-in retrained from ticket 212's tuned settings until ticket 214 "
-               "delivers the reviewed model. Scores rank risk; they are not probabilities.")
+PROVISIONAL = ("**PROVISIONAL model.** A stand-in retrained from the tuned settings of tickets 212 and 217 "
+               "(SCRUM-184, SCRUM-185), with a provisional threshold, until the team model (212, 217) and the "
+               "decision threshold (214, SCRUM-186) are in the repo. Scores rank risk; they are not probabilities.")
 TRAINING_NOTE = ("This is a training presentation: the model learned from these students' outcomes, so their scores "
                  f"look better than they would on new students. Use {TEST_PRESENTATION} to see the model on new students.")
 

@@ -51,6 +51,6 @@ How each case is handled:
 - with valid and student-level team tables
 
 ## Limits
-- The model is provisional until ticket 214.
+- The model and threshold are provisional until the team model (tickets 212 and 217) and the decision threshold (ticket 214) are in the repo.
 - The team tables use a proposed format until their owners confirm it.
 - The flagged-list download writes student IDs to the user's machine. It is meant for staff follow-up and should be handled under the project's data rules.
