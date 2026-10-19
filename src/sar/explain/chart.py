@@ -1,8 +1,8 @@
 """SCRUM-187: SHAP bar chart for one student's Explanation.
 
-Top panel: the inputs that move this student's score most (activity, assessments, study load and
-module), red when they raise the score and blue when they lower it, with the rest summed into
-one bar. Bottom panel: the background factors, in grey on the same scale, shown for
+Top panel: the inputs that move this student's score most, red when they raise the score and
+blue when they lower it; course-level inputs (module, assessment calendar) are orange, and the
+rest are summed into one grey bar. Bottom panel: the background factors, in grey on the same scale, shown for
 transparency only; they are never used as reasons.
 """
 
@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from sar.viz.plots import AT_RISK, CATEGORY_LABELS, FEATURE_LABELS, NEUTRAL, ON_TRACK, _clean, save_fig
+
+COURSE_COLOUR = "#DD8452"
 
 
 def short_label(feature: str) -> str:
@@ -43,7 +45,8 @@ def plot_explanation(expl, n: int = 8, save: bool = False, name: str = "student_
     rest = main.drop(top.index)
     labels = [f"{short_label(f)}: {_fmt(v)}" for f, v in top["value"].items()]
     values = list(top["contribution"])
-    colors = [AT_RISK if v > 0 else ON_TRACK for v in values]
+    colors = [COURSE_COLOUR if g == "course" else AT_RISK if v > 0 else ON_TRACK
+              for g, v in zip(top["group"], values)]
     if len(rest):
         labels.append(f"Other inputs ({len(rest)})")
         values.append(float(rest["contribution"].sum()))
@@ -57,7 +60,8 @@ def plot_explanation(expl, n: int = 8, save: bool = False, name: str = "student_
         gridspec_kw={"height_ratios": [max(len(labels), 1), max(len(bg_labels), 1)]},
     )
     _bars(ax, labels, values, colors)
-    ax.set_title("What moves this student's score (red raises it, blue lowers it)", loc="left", fontsize=10)
+    ax.set_title("What moves this student's score (red raises it, blue lowers it, orange is course-level)",
+                 loc="left", fontsize=10)
     if len(bg):
         _bars(ax_bg, bg_labels, list(bg["contribution"]), [NEUTRAL] * len(bg))
         ax_bg.set_title(f"Background factors, shown for transparency only and never used as reasons "
