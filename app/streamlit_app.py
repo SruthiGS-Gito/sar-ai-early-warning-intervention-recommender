@@ -7,8 +7,9 @@ Tabs: Student Lookup, Department Dashboard, Retention Funnel, Batch Report.
 * Anything missing shows a message; the app does not crash on it.
 * Displays are aggregated by default. One student's details appear only after they are chosen,
   and the flagged-student list sits in a closed expander.
-* Department, funnel and profile tables belong to tickets 203, 207 and 210. The app shows them
-  only if their CSV exists (see sar.service.data); otherwise it says "not available yet".
+* Department, funnel and profile tables belong to tickets 203, 207 and 210. Each gets a status card
+  (what it is, owner ticket, expected file and columns, current status); the table itself is shown
+  only if its CSV exists and passes the checks in sar.service.data.
 """
 
 import sys
@@ -28,10 +29,11 @@ from sar.recommend.recommender import NOTE, recommend  # noqa: E402
 from sar.service.data import (  # noqa: E402
     OPTIONAL_TABLES,
     Loaded,
+    TableStatus,
     load_matrix,
-    load_optional_table,
     load_provisional_model,
     resolve_paths,
+    table_status,
 )
 from sar.service.views import (  # noqa: E402
     MIN_CELL,
@@ -79,8 +81,8 @@ def get_scores(processed_dir: str, models_dir: str, presentation: str, features:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def get_table(name: str, processed_dir: str) -> Loaded:
-    return load_optional_table(OPTIONAL_TABLES[name], processed_dir)
+def get_table(name: str, processed_dir: str) -> TableStatus:
+    return table_status(OPTIONAL_TABLES[name], processed_dir)
 
 
 def presentation_picker(matrix, key: str) -> str:
@@ -89,15 +91,32 @@ def presentation_picker(matrix, key: str) -> str:
     return st.selectbox("Presentation", options, index=default, key=key)
 
 
-def show_optional_table(name: str, processed_dir: str) -> None:
-    spec = OPTIONAL_TABLES[name]
-    st.markdown(f"#### {spec.title}")
-    table = get_table(name, processed_dir)
-    if table.ok:
-        st.dataframe(table.value, hide_index=True)
-        st.caption(f"From data/processed/{spec.file} ({spec.ticket}).")
-    else:
-        st.info(table.message)
+STATUS_LABELS = {"missing": "Not available yet", "unreadable": "File could not be read",
+                 "refused": "Refused: contains student-level rows", "missing_columns": "Missing required columns",
+                 "loaded": "Loaded"}
+
+
+def status_card(name: str, processed_dir: str) -> None:
+    """One card per team table: what it is, who owns it, what file is expected, and its status."""
+    status = get_table(name, processed_dir)
+    spec = status.spec
+    with st.container(border=True):
+        st.markdown(f"#### {spec.title}")
+        st.write(spec.description)
+        st.markdown(
+            f"- **Owner ticket:** {spec.ticket}\n"
+            f"- **Expected file:** `data/processed/{spec.file}`\n"
+            f"- **Required columns:** {', '.join(f'`{c}`' for c in spec.columns)}\n"
+            f"- **Status:** {STATUS_LABELS[status.state]}"
+        )
+        if status.state == "loaded":
+            st.success(status.message)
+            st.dataframe(status.table, hide_index=True)
+        elif status.state == "missing":
+            st.info(status.message)
+        else:
+            st.warning(status.message)
+        st.caption("File format and display rules: docs/app.md")
 
 
 st.set_page_config(page_title="SAR-AI early warning", layout="wide")
@@ -176,12 +195,13 @@ with lookup:
 
 with dashboard:
     st.subheader("Department Dashboard")
-    show_optional_table("department_risk", processed)
-    show_optional_table("student_profiles", processed)
+    st.caption("Model-based counts by module (provisional model) are in the Batch Report tab.")
+    status_card("department_risk", processed)
+    status_card("student_profiles", processed)
 
 with funnel:
     st.subheader("Retention Funnel")
-    show_optional_table("retention_funnel", processed)
+    status_card("retention_funnel", processed)
 
 with batch:
     st.subheader("Batch Report")

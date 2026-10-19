@@ -13,6 +13,7 @@ AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 
 def _texts(at) -> str:
     parts = [e.value for e in at.info] + [e.value for e in at.warning] + [e.value for e in at.markdown]
+    parts += [e.value for e in at.success]
     parts += [e.value for e in at.caption] + [str(e.value) for e in at.metric]
     return "\n".join(str(p) for p in parts)
 
@@ -42,6 +43,22 @@ def test_app_runs_with_nothing_available(empty_env):
     for ticket in ["ticket 203", "ticket 207", "ticket 210"]:
         assert f"not available yet: {ticket}" in text
     assert [t.label for t in at.tabs] == ["Student Lookup", "Department Dashboard", "Retention Funnel", "Batch Report"]
+
+
+def test_status_cards_describe_each_team_table(empty_env):
+    from sar.service.data import OPTIONAL_TABLES
+
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception
+    text = _texts(at)
+    for spec in OPTIONAL_TABLES.values():
+        assert f"#### {spec.title}" in text and spec.description in text
+        assert f"**Owner ticket:** {spec.ticket}" in text
+        assert f"`data/processed/{spec.file}`" in text
+        assert all(f"`{c}`" in text for c in spec.columns)
+    assert text.count("**Status:** Not available yet") == 3
+    assert text.count("File format and display rules: docs/app.md") == 3
+    assert "Model-based counts by module (provisional model) are in the Batch Report tab." in text
 
 
 def test_app_with_synthetic_data_and_model(synthetic_env, matrix):
@@ -83,5 +100,15 @@ def test_valid_team_table_is_shown_and_student_rows_are_refused(synthetic_env):
     assert not at.exception
     text = _texts(at)
     assert "Retention funnel is not available yet" not in text
-    assert "student-level rows" in text
+    assert "student-level rows" in text and "**Status:** Refused: contains student-level rows" in text
+    assert "**Status:** Loaded" in text and "Retention funnel: 2 rows, last updated" in text
     assert any(len(df.value) == 2 for df in at.dataframe)
+
+
+def test_missing_columns_are_named_on_the_card(synthetic_env):
+    processed = synthetic_env / "data" / "processed"
+    pd.DataFrame({"stage": ["Registered"]}).to_csv(processed / "retention_funnel.csv", index=False)
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception
+    text = _texts(at)
+    assert "**Status:** Missing required columns" in text and "missing expected columns: students" in text

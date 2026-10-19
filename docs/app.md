@@ -14,8 +14,8 @@ streamlit run app/streamlit_app.py
 | Tab | Shows | Source |
 |---|---|---|
 | Student Lookup | Pick a presentation, module and student to see the risk score, the SHAP chart (background factors in their own panel), the plain-language sentence, and up to three support types with similar-student context | SCRUM-187, SCRUM-188 |
-| Department Dashboard | Department risk table and student profiles table, if present | tickets 203 and 210 |
-| Retention Funnel | Retention funnel table, if present | ticket 207 |
+| Department Dashboard | A status card for the department risk table and one for the student profiles table, with the table when present; a pointer to Batch Report for model-based counts | tickets 203 and 210 |
+| Retention Funnel | A status card for the retention funnel table, with the table when present | ticket 207 |
 | Batch Report | For a presentation: students, flagged count and share, by-module table, how scores spread around the threshold. The flagged list (closed expander, CSV download) and an optional 3D view of average score by activity and score bands (bands under 20 students hidden) are opt-in | provisional model |
 
 Display rules:
@@ -32,7 +32,7 @@ The app does not build these tables and does not import their code. It reads a C
 | `retention_funnel.csv` | 207 (SCRUM-177) | `stage`, `students` |
 | `student_profiles.csv` | 210 (SCRUM-183) | `profile`, plus any aggregate columns |
 
-How each case is handled:
+Each table has a status card showing what it is, the owner ticket, the expected file and required columns, and its current status. How each case is handled:
 - **Missing file:** "not available yet", with the ticket number.
 - **Missing columns:** a message naming them.
 - **File with an `id_student` column:** refused, because the app shows aggregated tables only.

@@ -50,6 +50,23 @@ def test_optional_tables(tmp_path, name):
     assert ok.ok and len(ok.value) == 2
 
 
+def test_table_status_states(tmp_path):
+    spec = data.OPTIONAL_TABLES["retention_funnel"]
+    st = data.table_status(spec, tmp_path)
+    assert st.state == "missing" and st.updated is None and st.path == tmp_path / spec.file
+    (tmp_path / spec.file).write_bytes(b"\x00\xff")
+    assert data.table_status(spec, tmp_path).state in {"unreadable", "missing_columns"}
+    pd.DataFrame({"stage": ["a"]}).to_csv(tmp_path / spec.file, index=False)
+    st = data.table_status(spec, tmp_path)
+    assert st.state == "missing_columns" and st.missing_columns == ("students",) and st.updated
+    pd.DataFrame({"stage": ["a"], "students": [3], "id_student": [9]}).to_csv(tmp_path / spec.file, index=False)
+    assert data.table_status(spec, tmp_path).state == "refused"
+    pd.DataFrame({"stage": ["a", "b", "c"], "students": [3, 2, 1]}).to_csv(tmp_path / spec.file, index=False)
+    st = data.table_status(spec, tmp_path)
+    assert st.ok and len(st.table) == 3 and "3 rows, last updated" in st.message
+    assert all(s.description for s in data.OPTIONAL_TABLES.values())
+
+
 def test_resolve_paths_follow_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("SAR_DATA_DIR", str(tmp_path / "d"))
     monkeypatch.setenv("SAR_MODELS_DIR", str(tmp_path / "m"))
