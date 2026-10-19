@@ -1,0 +1,6 @@
+# The app shows individual student records: serve it on this machine only.
+[server]
+address = "localhost"
+
+[browser]
+gatherUsageStats = false
