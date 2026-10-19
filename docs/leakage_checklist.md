@@ -26,3 +26,4 @@ Each feature builder runs twice: on the data, and on the same data with every po
 - Thresholds come from out-of-fold scores on the training presentations (GroupKFold by presentation), never from 2014J.
 - SHAP uses tree_path_dependent mode, so no validation rows are passed to the explainer.
 - Notebook outputs and saved examples show aggregates or synthetic students only.
+- The similar-student pool for recommendations (SCRUM-188) holds training presentations only and refuses 2014J; its imputer and scaler are fitted on the pool.
