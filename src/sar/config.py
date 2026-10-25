@@ -29,3 +29,7 @@ OULAD_TABLES = (
 CUTOFF_DAY = 30
 
 RANDOM_SEED = 42
+
+# Protected (background) attributes. The final model leaves them out as inputs; they are
+# still read from the matrix for fairness checks and shown separately in explanations.
+PROTECTED_FEATURES = ("gender", "region", "highest_education", "imd_band", "age_band", "disability")

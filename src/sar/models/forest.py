@@ -73,14 +73,8 @@ def train_forest(X_train: pd.DataFrame, y_train: pd.Series, params: dict | None 
     return model
 
 
-def oof_threshold(
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    groups: pd.Series,
-    recall_target: float = RECALL_TARGET,
-    params: dict | None = None,
-) -> dict:
-    """Highest threshold whose out-of-fold recall reaches `recall_target`.
+def oof_scores(estimator: Pipeline, X_train: pd.DataFrame, y_train: pd.Series, groups: pd.Series) -> np.ndarray:
+    """Out-of-fold at-risk scores for an unfitted `estimator`.
 
     Each training presentation is scored by a model fitted on the other training
     presentations (GroupKFold, one fold per presentation), so no score comes from a model
@@ -89,20 +83,37 @@ def oof_threshold(
     n_groups = pd.Series(groups).nunique()
     if n_groups < 2:
         raise ValueError("oof_threshold needs at least two training presentations")
-    oof = cross_val_predict(
-        build_forest(X_train, params), X_train, y_train,
+    return cross_val_predict(
+        estimator, X_train, y_train,
         groups=groups, cv=GroupKFold(n_splits=n_groups), method="predict_proba",
     )[:, 1]
-    precision, recall, thresholds = precision_recall_curve(y_train, oof)
+
+
+def recall_cutoff(y: pd.Series, scores: np.ndarray, recall_target: float = RECALL_TARGET) -> dict:
+    """Highest cutoff on `scores` whose recall reaches `recall_target`."""
+    precision, recall, thresholds = precision_recall_curve(y, scores)
     i = int(np.where(recall[:-1] >= recall_target)[0][-1])
-    flagged = oof >= thresholds[i]
+    return {"threshold": float(thresholds[i]), "recall": float(recall[i]), "precision": float(precision[i]),
+            "flagged_share": float((scores >= thresholds[i]).mean())}
+
+
+def oof_threshold(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    groups: pd.Series,
+    recall_target: float = RECALL_TARGET,
+    params: dict | None = None,
+) -> dict:
+    """Highest threshold whose out-of-fold recall reaches `recall_target` (folds as in oof_scores)."""
+    oof = oof_scores(build_forest(X_train, params), X_train, y_train, groups)
+    cut = recall_cutoff(y_train, oof, recall_target)
     return {
-        "threshold": float(thresholds[i]),
+        "threshold": cut["threshold"],
         "recall_target": recall_target,
-        "oof_recall": float(recall[i]),
-        "oof_precision": float(precision[i]),
-        "oof_flagged_share": float(flagged.mean()),
-        "folds": int(n_groups),
+        "oof_recall": cut["recall"],
+        "oof_precision": cut["precision"],
+        "oof_flagged_share": cut["flagged_share"],
+        "folds": int(pd.Series(groups).nunique()),
     }
 
 
@@ -133,9 +144,17 @@ def load_model(metadata_path: Path, models_dir: Path | None = None) -> tuple[Pip
     """
     metadata = json.loads(Path(metadata_path).read_text())
     model_path = Path(models_dir or MODELS_DIR) / metadata["model_file"]
-    if not model_path.exists():
-        raise FileNotFoundError(f"{model_path} not found. Run: python scripts/train_forest.py")
-    if file_sha256(model_path) != metadata["model_sha256"]:
-        raise ValueError(f"{model_path.name} does not match {Path(metadata_path).name}. "
-                         "Re-run scripts/train_forest.py")
-    return joblib.load(model_path), metadata
+    return load_checked(model_path, metadata["model_sha256"], Path(metadata_path).name), metadata
+
+
+def load_checked(path: Path, sha256: str, metadata_name: str, script: str = "scripts/train_forest.py"):
+    """joblib.load `path` only if it exists and its hash matches the one recorded in the metadata.
+
+    joblib can run code on load: use this only for files built locally by this repo's scripts.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found. Run: python {script}")
+    if file_sha256(path) != sha256:
+        raise ValueError(f"{path.name} does not match {metadata_name}. Re-run {script}")
+    return joblib.load(path)
