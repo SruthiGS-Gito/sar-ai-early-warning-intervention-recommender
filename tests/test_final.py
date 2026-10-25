@@ -109,7 +109,8 @@ def test_validation_rows_never_reach_the_fit(result):
     assert len(fitted["oof_y"]) == n_train
 
 
-@pytest.mark.skipif(not (final.FINAL_DIR / "config.json").exists(), reason="models/final not built here")
+@pytest.mark.skipif(not all((final.FINAL_DIR / f).exists() for f in ("model.joblib", "calibrator.joblib")),
+                    reason="run python scripts/train_final.py to build the final model")
 def test_built_final_model_files():
     loaded, config = final.load_final()
     assert not set(config["features"]) & set(PROTECTED_FEATURES) and len(config["features"]) == 24
