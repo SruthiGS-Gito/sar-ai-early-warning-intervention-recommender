@@ -1,16 +1,21 @@
 """SCRUM-188: suggest up to three support types for a student, with a reason and context.
 
+The recommender is rule-based: it matches the model's risk drivers to support types through the
+fixed, reviewable mapping in sar.recommend.interventions. Nothing is learned from outcomes.
+
 `recommend(expl, row, pool)` takes the student's SHAP Explanation (SCRUM-187), their inputs and a
 NeighbourPool, and returns a Recommendation:
-  * each support type is scored from the inputs that raise the student's risk score
-    (sar.recommend.interventions); background and course-level inputs are never used
+  * each support type is scored from the actionable inputs (engagement, submissions, timing,
+    workload) that raise the student's risk score; protected factors, course-level inputs and
+    previous attempts are never used
   * each suggestion names its linked drivers in plain language, preferring drivers that a
     higher-ranked suggestion has not already named
   * context comes from the most similar students in the training presentations: how many ended
     At Risk or On Track, and the median of the main driver in each group, with group sizes
 
-Wording: OULAD records no interventions, so nothing here says a support type works or what it
-would change. Neighbour figures are patterns among similar past students.
+OULAD contains no record of interventions. The similar-student context is therefore descriptive:
+it shows patterns among similar past students and is not evidence that any support is effective.
+Nothing here says a support type works or what it would change.
 """
 
 from dataclasses import dataclass
@@ -24,9 +29,10 @@ from sar.recommend.neighbours import Neighbours, NeighbourPool
 
 N_SUGGESTIONS = 3
 MIN_GROUP = 10  # smallest outcome group whose median is shown
-NOTE = ("Suggestions match the model's risk drivers to support types. Figures for similar past students "
-        "show patterns, not the effect of any support: OULAD records no interventions. "
-        "Background factors are never used.")
+NOTE = ("Suggestions are rule-based: they match the model's risk drivers to support types. Figures for similar "
+        "past students are descriptive patterns and do not show whether any support changes outcomes: OULAD "
+        "records no interventions. Background characteristics are never used.")
+LOW_BAND = "Low"
 
 
 @dataclass
@@ -43,12 +49,16 @@ class Suggestion:
 class Recommendation:
     suggestions: list[Suggestion]
     neighbours: Neighbours
-    flagged: bool | None
+    band: str | None
+
+    @property
+    def optional(self) -> bool:
+        return self.band == LOW_BAND
 
     def text(self) -> str:
         lines = [self.neighbours.summary()]
-        if self.flagged is False:
-            lines.append("Below the provisional threshold, so these suggestions are optional.")
+        if self.optional:
+            lines.append("Low risk band, so these suggestions are optional.")
         if not self.suggestions:
             lines.append("No activity, assessment or study-load input raises the score noticeably, "
                          "so no support type is matched.")
@@ -103,4 +113,4 @@ def recommend(expl, row, pool: NeighbourPool, n: int = N_SUGGESTIONS, same_modul
                 intervention=name, label=label(name), score=float(total), drivers=drivers,
                 reason=f"{label(name)}: linked to {linked}.", evidence=_evidence(drivers[0], neighbours),
             ))
-    return Recommendation(suggestions, neighbours, expl.flagged)
+    return Recommendation(suggestions, neighbours, expl.band)

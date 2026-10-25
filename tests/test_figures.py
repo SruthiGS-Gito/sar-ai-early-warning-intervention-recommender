@@ -1,15 +1,15 @@
 import numpy as np
 import pandas as pd
 import pytest
-from conftest import FEATURES, synthetic_matrix
+from conftest import synthetic_matrix
 
 from sar.service import figures, views
 
 
 @pytest.fixture(scope="module")
-def bands(small_forest):
+def bands(small_final):
     big = synthetic_matrix(n=4000, seed=5)
-    scored = views.score_presentation(small_forest, big, FEATURES, "2014J", 0.5)
+    scored = views.score_presentation(small_final[0], big, "2014J")
     return scored, views.risk_band_table(scored, big)
 
 

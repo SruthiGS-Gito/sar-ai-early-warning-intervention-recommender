@@ -3,7 +3,9 @@
 Run from the repo root:  streamlit run app/streamlit_app.py
 Tabs: Student Lookup, Department Dashboard, Retention Funnel, Batch Report.
 
-* Data, model, explainer and the similar-student pool load once (cached).
+* The final model (models/final/) scores students with a calibrated risk score, a risk band
+  (Low, Medium, High) and a rank. Students are flagged by capacity ranking or by the wide-net cutoff.
+* Data, model, explainer, precomputed explanations and the similar-student pool load once (cached).
 * Anything missing shows a message; the app does not crash on it.
 * Displays are aggregated by default. One student's details appear only after they are chosen,
   and the flagged-student list sits in a closed expander.
@@ -23,33 +25,42 @@ import streamlit as st  # noqa: E402
 
 from sar.data.split import TEST_PRESENTATION, make_split  # noqa: E402
 from sar.explain.chart import explanation_table, plot_explanation  # noqa: E402
-from sar.explain.shap_explain import explain_student, make_explainer  # noqa: E402
+from sar.explain.shap_explain import explain_student, explanation_from_contributions, make_explainer  # noqa: E402
 from sar.recommend.neighbours import NeighbourPool  # noqa: E402
 from sar.recommend.recommender import NOTE, recommend  # noqa: E402
 from sar.service.data import (  # noqa: E402
     OPTIONAL_TABLES,
+    SHAP_PREFIX,
     Loaded,
     TableStatus,
+    load_final_model,
     load_matrix,
-    load_provisional_model,
+    load_shap_cache,
     resolve_paths,
     table_status,
 )
 from sar.service.figures import band_figure, hidden_bands  # noqa: E402
 from sar.service.views import (  # noqa: E402
+    KEY,
     MIN_CELL,
     batch_summary,
+    capacity_shares,
+    flag_capacity,
+    flag_wide_net,
     is_training_presentation,
+    risk_band_edges,
     risk_band_table,
     score_presentation,
 )
 from sar.viz.plots import AT_RISK, ON_TRACK  # noqa: E402
 
-PROVISIONAL = ("**PROVISIONAL model.** A stand-in retrained from the tuned settings of tickets 212 and 217 "
-               "(SCRUM-184, SCRUM-185), with a provisional threshold, until the team model (212, 217) and the "
-               "decision threshold (214, SCRUM-186) are in the repo. Scores rank risk; they are not probabilities.")
+MODEL_NOTE = ("Model: Random Forest on {n} Day 30 inputs, without background characteristics, with isotonic "
+              "calibration. Validated on {val}. Students are ranked by calibrated risk; details in docs/final_model.md.")
+BAND_HELP = ("Risk bands come from the calibrated risk score: Low below the wide-net cutoff ({medium:.2f}), "
+             "Medium from it, High from the top-20% cutoff ({high:.2f}). Both cutoffs were set on training data.")
 TRAINING_NOTE = ("This is a training presentation: the model learned from these students' outcomes, so their scores "
                  f"look better than they would on new students. Use {TEST_PRESENTATION} to see the model on new students.")
+CAPACITY, WIDE_NET = "Capacity ranking", "Wide net (fixed cutoff)"
 
 
 @st.cache_data(show_spinner="Loading the Day 30 feature matrix...")
@@ -57,14 +68,19 @@ def get_matrix(processed_dir: str) -> Loaded:
     return load_matrix(processed_dir)
 
 
-@st.cache_resource(show_spinner="Loading the provisional model...")
+@st.cache_resource(show_spinner="Loading the model...")
 def get_model(models_dir: str) -> Loaded:
-    return load_provisional_model(models_dir)
+    return load_final_model(models_dir)
 
 
 @st.cache_resource(show_spinner=False)
 def get_explainer(models_dir: str, _model):
     return make_explainer(_model)
+
+
+@st.cache_resource(show_spinner="Loading precomputed explanations...")
+def get_shap_cache(models_dir: str, presentation: str, _config) -> Loaded:
+    return load_shap_cache(models_dir, presentation, _config)
 
 
 @st.cache_resource(show_spinner="Building the similar-student pool...")
@@ -76,9 +92,25 @@ def get_pool(processed_dir: str, _matrix) -> Loaded:
 
 
 @st.cache_data(show_spinner="Scoring students...")
-def get_scores(processed_dir: str, models_dir: str, presentation: str, features: tuple, threshold: float,
-               _model, _matrix):
-    return score_presentation(_model, _matrix, list(features), presentation, threshold)
+def get_scores(processed_dir: str, models_dir: str, presentation: str, _fitted, _matrix):
+    return score_presentation(_fitted, _matrix, presentation)
+
+
+@st.cache_data(show_spinner="Explaining the score...")
+def get_explanation(models_dir: str, presentation: str, module: str, student: int, band: str, _fitted, _config,
+                    _row):
+    """From the precomputed batch values when present, otherwise computed once for this student."""
+    features = _fitted["features"]
+    stored = get_shap_cache(models_dir, presentation, _config)
+    if stored.ok:
+        table, base = stored.value
+        hit = table[(table["code_module"] == module) & (table["id_student"] == student)]
+        if len(hit):
+            contrib = hit.iloc[0][[SHAP_PREFIX + f for f in features]]
+            contrib.index = features
+            return explanation_from_contributions(_row[features].iloc[0], contrib, base, hit.iloc[0]["raw_score"],
+                                                  band)
+    return explain_student(_fitted["model"], _row[features], get_explainer(models_dir, _fitted["model"]), band)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -127,8 +159,6 @@ paths = resolve_paths()
 processed, models = str(paths["processed"]), str(paths["models"])
 matrix_l, model_l = get_matrix(processed), get_model(models)
 core_ok = matrix_l.ok and model_l.ok
-if model_l.ok:
-    st.warning(PROVISIONAL)
 
 
 def core_message() -> None:
@@ -139,8 +169,10 @@ def core_message() -> None:
 
 if core_ok:
     matrix = matrix_l.value
-    model, meta = model_l.value
-    features, threshold = meta["features"], meta["threshold"]["threshold"]
+    final = model_l.value
+    fitted, cutoffs, metrics = final.fitted, final.fitted["cutoffs"], final.metrics
+    edges = dict(risk_band_edges(cutoffs))
+    st.caption(MODEL_NOTE.format(n=len(fitted["features"]), val=", ".join(metrics["validation_presentation"])))
 
 lookup, dashboard, funnel, batch = st.tabs(["Student Lookup", "Department Dashboard", "Retention Funnel", "Batch Report"])
 
@@ -161,19 +193,19 @@ with lookup:
                        "as it does and which support fits.")
         else:
             row = in_pres[(in_pres["code_module"] == module) & (in_pres["id_student"] == sid)].head(1)
+            scored = get_scores(processed, models, pres, fitted, matrix)
+            me = scored[(scored["code_module"] == module) & (scored["id_student"] == sid)].iloc[0]
             if is_training_presentation(pres):
                 st.info(TRAINING_NOTE)
-            expl = explain_student(model, row[features], threshold, get_explainer(models, model))
+            expl = get_explanation(models, pres, module, int(sid), str(me["band"]), fitted, final.config, row)
             left, right = st.columns([3, 2])
             with left:
                 fig = plot_explanation(expl)
                 st.pyplot(fig)
                 plt.close(fig)
             with right:
-                st.metric("Risk score", f"{expl.score:.2f}",
-                          help=f"Provisional threshold {threshold:.2f}. The score ranks risk; it is not a probability.")
-                st.markdown(f"**{'At Risk' if expl.flagged else 'On Track'}** "
-                            f"(provisional threshold {threshold:.2f})")
+                st.metric("Risk band", str(me["band"]), help=BAND_HELP.format(**{k.lower(): v for k, v in edges.items()}))
+                st.caption(f"Rank {int(me['rank']):,} of {len(scored):,} students in {pres} by calibrated risk.")
                 st.write(expl.sentence)
             st.markdown("#### Suggested support")
             pool_l = get_pool(processed, matrix)
@@ -182,8 +214,8 @@ with lookup:
             else:
                 rec = recommend(expl, row, pool_l.value)
                 st.caption(rec.neighbours.summary())
-                if rec.flagged is False:
-                    st.caption("Below the provisional threshold, so these suggestions are optional.")
+                if rec.optional:
+                    st.caption("Low risk band, so these suggestions are optional.")
                 if not rec.suggestions:
                     st.write("No activity, assessment or study-load input raises the score noticeably, "
                              "so no support type is matched.")
@@ -196,7 +228,7 @@ with lookup:
 
 with dashboard:
     st.subheader("Department Dashboard")
-    st.caption("Model-based counts by module (provisional model) are in the Batch Report tab.")
+    st.caption("Model-based counts by module are in the Batch Report tab.")
     status_card("department_risk", processed)
     status_card("student_profiles", processed)
 
@@ -212,29 +244,40 @@ with batch:
         pres = presentation_picker(matrix, "batch_presentation")
         if is_training_presentation(pres):
             st.info(TRAINING_NOTE)
-        scored = get_scores(processed, models, pres, tuple(features), threshold, model, matrix)
+        scored = get_scores(processed, models, pres, fitted, matrix)
+        rule = st.radio("Flagging rule", [CAPACITY, WIDE_NET], horizontal=True, key="flag_rule")
+        if rule == CAPACITY:
+            share = st.select_slider("Contact capacity (share of this cohort)", options=capacity_shares(metrics),
+                                     value=0.2, format_func=lambda s: f"{s:.0%}", key="capacity")
+            flagging = flag_capacity(scored, share, metrics)
+        else:
+            flagging = flag_wide_net(scored, cutoffs, metrics)
+        scored = scored.assign(flagged=flagging.flagged)
+        st.caption(flagging.describe())
         c1, c2, c3 = st.columns(3)
         c1.metric("Students", f"{len(scored):,}")
         c2.metric("Flagged", f"{int(scored['flagged'].sum()):,}")
         c3.metric("Flagged share", f"{scored['flagged'].mean():.0%}" if len(scored) else "n/a")
 
         st.markdown("#### By module")
-        st.dataframe(batch_summary(scored).style.format({"Flagged share": "{:.0%}", "Average score": "{:.2f}"}))
+        st.dataframe(batch_summary(scored).style.format({"Flagged share": "{:.0%}"}))
 
-        st.markdown("#### How scores spread around the threshold")
+        st.markdown("#### How calibrated risk spreads across the bands")
         hist = go.Figure()
-        for is_flagged, colour, name in [(False, ON_TRACK, "Below threshold"), (True, AT_RISK, "Flagged")]:
+        for is_flagged, colour, name in [(False, ON_TRACK, "Not flagged"), (True, AT_RISK, "Flagged")]:
             hist.add_trace(go.Histogram(x=scored.loc[scored["flagged"] == is_flagged, "score"], name=name,
                                         marker_color=colour, xbins={"start": 0, "end": 1, "size": 0.025}))
-        hist.add_vline(x=threshold, line_dash="dash", annotation_text=f"Provisional threshold {threshold:.2f}")
-        hist.update_layout(barmode="overlay", xaxis_title="Risk score", yaxis_title="Students",
+        for band, edge in edges.items():
+            if edge > 0:
+                hist.add_vline(x=edge, line_dash="dash", annotation_text=f"{band} from {edge:.2f}")
+        hist.update_layout(barmode="overlay", xaxis_title="Calibrated risk score", yaxis_title="Students",
                            margin={"t": 30}, height=360, legend={"orientation": "h"})
         st.plotly_chart(hist, width="stretch")
 
         with st.expander("Flagged students (individual rows; for staff follow-up only)"):
-            flagged = scored[scored["flagged"]].sort_values("score", ascending=False)
+            flagged = scored[scored["flagged"]].sort_values("rank")[KEY + ["band", "rank"]]
             st.caption("Open a student in Student Lookup to see the reasons and suggested support.")
-            st.dataframe(flagged.drop(columns="flagged").round({"score": 3}), hide_index=True)
+            st.dataframe(flagged, hide_index=True)
             st.download_button("Download the flagged list (CSV)", flagged.to_csv(index=False),
                                file_name=f"flagged_{pres}.csv", mime="text/csv")
 
@@ -247,5 +290,5 @@ with batch:
             else:
                 st.plotly_chart(band_figure(bands), width="stretch")
                 st.caption(f"Each marker is a band of {pres} students: height and colour show the band's average "
-                           f"risk score, size shows how many students it holds. {hidden_bands(bands)} bands with fewer "
-                           f"than {MIN_CELL} students are not shown. Drag to rotate; hover for details.")
+                           f"calibrated risk score, size shows how many students it holds. {hidden_bands(bands)} bands "
+                           f"with fewer than {MIN_CELL} students are not shown. Drag to rotate; hover for details.")

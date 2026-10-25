@@ -2,8 +2,10 @@ import pandas as pd
 import pytest
 from conftest import FEATURES
 
+from sar.config import PROTECTED_FEATURES
 from sar.explain import factors
 from sar.explain.shap_explain import Explanation, explain_student, make_explainer
+from sar.recommend.interventions import ACTIONABLE_FEATURES
 from sar.recommend.neighbours import NeighbourPool
 from sar.recommend.recommender import driver_scores, recommend
 
@@ -11,20 +13,21 @@ BANNED = ["because of", "caused", "benefit", "led to", "due to", "helped", "impr
 
 
 @pytest.fixture(scope="module")
-def setup(matrix, small_forest):
+def setup(matrix, small_final):
+    model = small_final[0]["model"]
     train = matrix[matrix["code_presentation"] != "2014J"]
     val = matrix[matrix["code_presentation"] == "2014J"]
-    return small_forest, make_explainer(small_forest), NeighbourPool(train, k=30), val
+    return model, make_explainer(model), NeighbourPool(train, k=30), val
 
 
-def _fake(contribs: dict, flagged_threshold=0.5) -> Explanation:
+def _fake(contribs: dict, band=None) -> Explanation:
     table = pd.DataFrame({
         "value": 1.0,
         "contribution": [contribs.get(f, 0.0) for f in FEATURES],
         "group": [factors.group_of(f) for f in FEATURES],
         "phrase": [f"phrase for {f}" for f in FEATURES],
     }, index=pd.Index(FEATURES, name="feature"))
-    return Explanation(0.7, 0.5, flagged_threshold, table)
+    return Explanation(0.7, 0.5, band, table)
 
 
 def test_background_and_course_never_drive_a_suggestion():
@@ -49,7 +52,7 @@ def test_recommendation_for_real_explanations(setup):
     model, explainer, pool, val = setup
     for i in range(15):
         row = val.iloc[[i]]
-        expl = explain_student(model, row[FEATURES], 0.5, explainer)
+        expl = explain_student(model, row[list(model.feature_names_in_)], explainer, band="High")
         rec = recommend(expl, row, pool)
         assert len(rec.suggestions) <= 3
         assert [s.score for s in rec.suggestions] == sorted([s.score for s in rec.suggestions], reverse=True)
@@ -63,10 +66,9 @@ def test_recommendation_for_real_explanations(setup):
         text = rec.text()
         assert "30 most similar students" in text and "OULAD records no interventions" in text
         assert not any(b in text.lower() for b in BANNED)
-        for f in factors.BACKGROUND:
-            assert expl.contributions.loc[f, "phrase"] not in text
+        assert not set(expl.contributions.index) & set(PROTECTED_FEATURES)
         for s in rec.suggestions:
-            assert all(factors.group_of(d) in factors.REASON_GROUPS for d in s.drivers)
+            assert all(d in ACTIONABLE_FEATURES for d in s.drivers)
             assert expl.contributions.loc[s.drivers[0], "phrase"] in s.reason
             assert "n = " in s.evidence or "Too few" in s.evidence
             assert "median" in s.evidence.lower() or "Too few" in s.evidence
@@ -78,9 +80,15 @@ def test_no_suggestion_when_nothing_raises_the_score(setup):
     assert rec.suggestions == [] and "no support type is matched" in rec.text()
 
 
-def test_below_threshold_is_marked_optional(setup):
+def test_low_band_is_marked_optional(setup):
     _, _, pool, val = setup
-    rec = recommend(_fake({"n_missed": 0.1}, flagged_threshold=0.9), val.iloc[[0]], pool)
+    rec = recommend(_fake({"n_missed": 0.1}, band="Low"), val.iloc[[0]], pool)
     lines = rec.text().splitlines()
-    assert rec.flagged is False and lines[0].startswith("The 30 most similar")
-    assert lines[1].startswith("Below the provisional threshold")
+    assert rec.optional and lines[0].startswith("The 30 most similar")
+    assert lines[1] == "Low risk band, so these suggestions are optional."
+    high = recommend(_fake({"n_missed": 0.1}, band="High"), val.iloc[[0]], pool)
+    assert not high.optional and "optional" not in high.text()
+
+
+def test_previous_attempts_never_drive_a_suggestion():
+    assert driver_scores(_fake({"num_of_prev_attempts": 0.3})).empty

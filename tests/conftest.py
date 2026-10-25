@@ -68,10 +68,27 @@ def matrix():
     return synthetic_matrix()
 
 
+SMALL_PARAMS = {"n_estimators": 30, "min_samples_leaf": 5, "class_weight": "balanced_subsample"}
+
+
 @pytest.fixture(scope="session")
 def small_forest(matrix):
+    """30-input forest (background factors included), for tests of generic explanation behaviour."""
     from sar.models.forest import train_forest
 
     train = matrix[matrix["code_presentation"] != "2014J"]
-    params = {"n_estimators": 30, "min_samples_leaf": 5, "class_weight": "balanced_subsample"}
-    return train_forest(train[FEATURES], train["at_risk"], params)
+    return train_forest(train[FEATURES], train["at_risk"], SMALL_PARAMS)
+
+
+@pytest.fixture(scope="session")
+def small_final(matrix):
+    """A small final-configuration model (24 inputs, calibrator, cutoffs) and metrics in the
+    metrics.json layout, built with sar.models.final on the synthetic matrix."""
+    from sar.data.split import make_split
+    from sar.models import final
+
+    train, val = make_split(matrix)
+    fitted = final.fit(train, final.final_features(FEATURES), final.forest_builder(SMALL_PARAMS))
+    metrics = {"validation_presentation": ["2014J"],
+               "final": {"cutoffs_from_oof": fitted["cutoffs"], "validation": final.evaluate(fitted, val)}}
+    return fitted, metrics

@@ -3,12 +3,18 @@
 Every loader returns a Loaded(value, message): value is None and message says what to do when
 something is missing or unreadable, so the app can show the message instead of crashing.
 
+The model is the final model in models/final/ (sar.models.final), loaded through its hash-checked
+loader together with config.json and metrics.json. Batch SHAP values precomputed by
+scripts/precompute_shap.py are stored next to it (models/final/shap/, git-ignored, student-level)
+and are only used when they were computed for the same model file.
+
 Optional team tables (department risk, retention funnel, student profiles) belong to other
 tickets. The app only reads them if their CSV exists in data/processed, has the expected columns,
 and holds no student-level column; otherwise it says "not available yet". It never builds them.
 `table_status` reports which of these cases applies, for the status cards in the app.
 """
 
+import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,7 +23,12 @@ from pathlib import Path
 import pandas as pd
 
 from sar.config import MODELS_DIR, PROCESSED_DIR
-from sar.models.forest import MODEL_NAME, load_model
+from sar.models.final import load_final
+
+FINAL_SUBDIR = "final"
+SHAP_SUBDIR = "shap"
+SHAP_PREFIX = "shap_"
+TRAIN_HINT = "Run: python scripts/train_final.py"
 
 STUDENT_LEVEL_COLUMNS = {"id_student"}
 
@@ -88,18 +99,65 @@ def load_matrix(processed_dir: Path) -> Loaded:
         return Loaded(message=f"Could not read {path.name}: {type(e).__name__}.")
 
 
-def load_provisional_model(models_dir: Path) -> Loaded:
-    """Loaded.value is (model, metadata)."""
-    meta = Path(models_dir) / f"{MODEL_NAME}.json"
-    if not meta.exists():
-        return Loaded(message="The provisional model is not available yet. Run: python scripts/train_forest.py")
+@dataclass
+class FinalModel:
+    fitted: dict    # model, calibrator, features, cutoffs (sar.models.final.load_final)
+    config: dict    # models/final/config.json
+    metrics: dict   # models/final/metrics.json
+
+
+def final_dir(models_dir: Path) -> Path:
+    return Path(models_dir) / FINAL_SUBDIR
+
+
+def load_final_model(models_dir: Path) -> Loaded:
+    """Loaded.value is a FinalModel."""
+    folder = final_dir(models_dir)
+    if not all((folder / f).exists() for f in ("config.json", "metrics.json", "model.joblib", "calibrator.joblib")):
+        return Loaded(message=f"The model is not available yet. {TRAIN_HINT}")
     try:
-        return Loaded(load_model(meta, models_dir))
+        fitted, config = load_final(folder)
+        metrics = json.loads((folder / "metrics.json").read_text())
+        return Loaded(FinalModel(fitted, config, metrics))
     except (FileNotFoundError, ValueError) as e:
-        return Loaded(message=f"The provisional model could not be loaded: {e}")
+        return Loaded(message=f"The model could not be loaded: {e}")
     except Exception as e:
-        return Loaded(message=f"The provisional model could not be loaded ({type(e).__name__}). "
-                              "Re-run: python scripts/train_forest.py")
+        return Loaded(message=f"The model could not be loaded ({type(e).__name__}). {TRAIN_HINT}")
+
+
+def shap_cache_path(models_dir: Path, presentation: str) -> Path:
+    return final_dir(models_dir) / SHAP_SUBDIR / f"{presentation}.parquet"
+
+
+def save_shap_cache(models_dir: Path, presentation: str, keys: pd.DataFrame, contributions: pd.DataFrame,
+                    raw_scores: pd.Series, base_score: float, config: dict) -> Path:
+    """Store one presentation's SHAP contributions, tied to the model file's hash."""
+    path = shap_cache_path(models_dir, presentation)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    table = keys.reset_index(drop=True).copy()
+    table["raw_score"] = raw_scores.to_numpy()
+    shap_cols = contributions.add_prefix(SHAP_PREFIX).reset_index(drop=True)
+    pd.concat([table, shap_cols], axis=1).to_parquet(path, index=False)
+    path.with_suffix(".json").write_text(json.dumps({
+        "presentation": presentation, "rows": len(table), "base_score": float(base_score),
+        "features": list(contributions.columns), "model_sha256": config["model_sha256"]}, indent=2))
+    return path
+
+
+def load_shap_cache(models_dir: Path, presentation: str, config: dict) -> Loaded:
+    """Loaded.value is (table, base_score) for a presentation, or a message saying how to build it."""
+    path = shap_cache_path(models_dir, presentation)
+    hint = f"Run: python scripts/precompute_shap.py --presentation {presentation}"
+    if not path.exists() or not path.with_suffix(".json").exists():
+        return Loaded(message=f"No precomputed explanations for {presentation}. {hint}")
+    try:
+        meta = json.loads(path.with_suffix(".json").read_text())
+        if meta["model_sha256"] != config["model_sha256"]:
+            return Loaded(message=f"Precomputed explanations for {presentation} belong to another model file. {hint}")
+        return Loaded((pd.read_parquet(path), meta["base_score"]))
+    except Exception as e:  # unreadable file: report it, do not crash the app
+        return Loaded(message=f"Precomputed explanations for {presentation} could not be read ({type(e).__name__}). "
+                              f"{hint}")
 
 
 def table_status(spec: TableSpec, processed_dir: Path) -> TableStatus:

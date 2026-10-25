@@ -2,10 +2,11 @@
 
 import pandas as pd
 import pytest
-from conftest import FEATURES
 
 from sar.config import PROJECT_ROOT
-from sar.models.forest import save_model
+from sar.explain.shap_explain import explain_rows
+from sar.models.final import save_final
+from sar.service.data import load_final_model, save_shap_cache
 
 APP = str(PROJECT_ROOT / "app" / "streamlit_app.py")
 AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
@@ -26,12 +27,12 @@ def empty_env(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def synthetic_env(empty_env, matrix, small_forest):
+def synthetic_env(empty_env, matrix, small_final):
     processed = empty_env / "data" / "processed"
     processed.mkdir(parents=True)
     matrix.to_csv(processed / "day30_feature_matrix.csv", index=False)
-    meta = {"features": FEATURES, "threshold": {"threshold": 0.5}}
-    save_model(small_forest, meta, empty_env / "models")
+    fitted, metrics = small_final
+    save_final(fitted, {"seed": 42}, metrics, empty_env / "models" / "final")
     return empty_env
 
 
@@ -39,7 +40,7 @@ def test_app_runs_with_nothing_available(empty_env):
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
     text = _texts(at)
-    assert "run_baseline.py" in text and "train_forest.py" in text
+    assert "run_baseline.py" in text and "train_final.py" in text
     for ticket in ["ticket 203", "ticket 207", "ticket 210"]:
         assert f"not available yet: {ticket}" in text
     assert [t.label for t in at.tabs] == ["Student Lookup", "Department Dashboard", "Retention Funnel", "Batch Report"]
@@ -58,16 +59,21 @@ def test_status_cards_describe_each_team_table(empty_env):
         assert all(f"`{c}`" in text for c in spec.columns)
     assert text.count("**Status:** Not available yet") == 3
     assert text.count("File format and display rules: docs/app.md") == 3
-    assert "Model-based counts by module (provisional model) are in the Batch Report tab." in text
+    assert "Model-based counts by module are in the Batch Report tab." in text
 
 
 def test_app_with_synthetic_data_and_model(synthetic_env, matrix):
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
     text = _texts(at)
-    assert "PROVISIONAL model" in text
+    assert "provisional" not in text.lower() and "threshold" not in text.lower()
+    assert "Validated on 2014J" in text and "24 Day 30 inputs" in text
     n_val = int((matrix["code_presentation"] == "2014J").sum())
     assert f"{n_val:,}" in text                                      # batch report student count
+    assert at.radio(key="flag_rule").value == "Capacity ranking"     # ranking is the default rule
+    assert at.select_slider(key="capacity").value == 0.2
+    assert f"{round(0.2 * n_val):,}" in [m.value for m in at.metric]  # top 20% flagged
+    assert "precision" in text and "recall" in text and "metrics.json" in text
     assert at.selectbox(key="lookup_student").value is None        # no student shown by default
     assert not at.toggle(key="show_3d").value                       # 3D view is opt-in
 
@@ -76,12 +82,32 @@ def test_app_with_synthetic_data_and_model(synthetic_env, matrix):
     at.selectbox(key="lookup_student").set_value(int(sid)).run()
     assert not at.exception
     text = _texts(at)
-    assert "Risk score" in text and "Suggested support" in text
+    band = [m for m in at.metric if m.label == "Risk band"]
+    assert len(band) == 1 and band[0].value in {"Low", "Medium", "High"}
+    assert "Rank " in text and "Suggested support" in text
     assert "most similar students from earlier presentations" in text and f"module {module}" in text
     assert "OULAD records no interventions" in text
+    assert "provisional" not in text.lower()
 
+    at.radio(key="flag_rule").set_value("Wide net (fixed cutoff)").run()
+    assert not at.exception and "Wide net: calibrated risk score of at least" in _texts(at)
     at.toggle(key="show_3d").set_value(True).run()
     assert not at.exception
+
+
+def test_lookup_uses_precomputed_explanations_when_present(synthetic_env, matrix):
+    models = synthetic_env / "models"
+    loaded = load_final_model(models).value
+    fitted = loaded.fitted
+    part = matrix[matrix["code_presentation"] == "2014J"]
+    base, contrib, raw = explain_rows(fitted["model"], part[fitted["features"]])
+    save_shap_cache(models, "2014J", part[["code_module", "code_presentation", "id_student"]], contrib, raw, base,
+                    loaded.config)
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    sid = at.selectbox(key="lookup_student").options[0]
+    at.selectbox(key="lookup_student").set_value(int(sid)).run()
+    assert not at.exception
+    assert "Background characteristics are not model inputs." in _texts(at)
 
 
 def test_training_presentation_is_labelled(synthetic_env):

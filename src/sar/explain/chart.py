@@ -1,9 +1,10 @@
 """SCRUM-187: SHAP bar chart for one student's Explanation.
 
-Top panel: the inputs that move this student's score most, red when they raise the score and
+Main panel: the inputs that move this student's score most, red when they raise the score and
 blue when they lower it; course-level inputs (module, assessment calendar) are orange, and the
-rest are summed into one grey bar. Bottom panel: the background factors, in grey on the same scale, shown for
-transparency only; they are never used as reasons.
+rest are summed into one grey bar. For a model that uses background factors as inputs, a second
+panel shows them in grey on the same scale, for transparency only; they are never used as reasons.
+The final model has no background inputs, so its chart has the main panel only.
 """
 
 import math
@@ -36,8 +37,7 @@ def _bars(ax, labels, values, colors):
     _clean(ax)
 
 
-def plot_explanation(expl, n: int = 8, save: bool = False, name: str = "student_explanation",
-                     out_dir=None, provisional: bool = True):
+def plot_explanation(expl, n: int = 8, save: bool = False, name: str = "student_explanation", out_dir=None):
     """Draw the explanation chart and return the Figure."""
     c = expl.contributions
     main = c[c["group"] != "background"]
@@ -55,10 +55,14 @@ def plot_explanation(expl, n: int = 8, save: bool = False, name: str = "student_
     bg = c[c["group"] == "background"]
     bg_labels = [f"{short_label(f)}: {_fmt(v)}" for f, v in bg["value"].items()]
 
-    fig, (ax, ax_bg) = plt.subplots(
-        2, 1, figsize=(8, 0.42 * (len(labels) + len(bg_labels)) + 2.6), sharex=True,
-        gridspec_kw={"height_ratios": [max(len(labels), 1), max(len(bg_labels), 1)]},
-    )
+    if len(bg):
+        fig, (ax, ax_bg) = plt.subplots(
+            2, 1, figsize=(8, 0.42 * (len(labels) + len(bg_labels)) + 2.6), sharex=True,
+            gridspec_kw={"height_ratios": [max(len(labels), 1), len(bg_labels)]},
+        )
+    else:
+        fig, ax = plt.subplots(figsize=(8, 0.42 * len(labels) + 2.2))
+        ax_bg = ax
     _bars(ax, labels, values, colors)
     ax.set_title("What moves this student's score (red raises it, blue lowers it, orange is course-level)",
                  loc="left", fontsize=10)
@@ -66,22 +70,16 @@ def plot_explanation(expl, n: int = 8, save: bool = False, name: str = "student_
         _bars(ax_bg, bg_labels, list(bg["contribution"]), [NEUTRAL] * len(bg))
         ax_bg.set_title(f"Background factors, shown for transparency only and never used as reasons "
                         f"(together {bg['contribution'].sum():+.3f})", loc="left", fontsize=10)
-    ax_bg.set_xlabel("Change in risk score (SHAP value)")
+    ax_bg.set_xlabel("Change in model score (SHAP value)")
     lo, hi = min(values + list(bg["contribution"]) + [0]), max(values + list(bg["contribution"]) + [0])
     pad = 0.25 * (hi - lo or 0.01)
     ax.set_xlim(lo - pad, hi + pad)
 
-    status = ""
-    if expl.threshold is not None:
-        side = "above" if expl.flagged else "below"
-        status = f", {side} the {'provisional ' if provisional else ''}threshold of {expl.threshold:.2f}"
-    fig.suptitle(f"Risk score {expl.score:.2f}{status}", x=0.02, ha="left", fontsize=12, fontweight="bold")
+    title = f"Risk band: {expl.band}" if expl.band else "What moves this student's score"
+    fig.suptitle(title, x=0.02, ha="left", fontsize=12, fontweight="bold")
     fig.tight_layout()
     caption = (f"Bars start from the model's starting score ({expl.base_score:.2f}, set in training) and add "
-               "up to this student's score. The score ranks risk; it is not a probability.")
-    if provisional:
-        caption += (" PROVISIONAL model and threshold until the team model (SCRUM-184, SCRUM-185) and "
-                    "decision threshold (SCRUM-186) are in the repo.")
+               "up to this student's model score. The risk band comes from the calibrated score.")
     fig.text(0.02, -0.01, caption, ha="left", va="top", fontsize=8, color=NEUTRAL, wrap=True)
     if save:
         save_fig(fig, name, out_dir)
