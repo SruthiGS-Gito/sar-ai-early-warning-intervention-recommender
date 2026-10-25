@@ -35,11 +35,12 @@ from sar.service.data import (  # noqa: E402
     resolve_paths,
     table_status,
 )
+from sar.service.figures import band_figure, hidden_bands  # noqa: E402
 from sar.service.views import (  # noqa: E402
     MIN_CELL,
     batch_summary,
     is_training_presentation,
-    risk_bands,
+    risk_band_table,
     score_presentation,
 )
 from sar.viz.plots import AT_RISK, ON_TRACK  # noqa: E402
@@ -239,18 +240,12 @@ with batch:
 
         st.markdown("### Optional 3D view")
         if st.toggle("Show average risk score by activity and score bands in 3D", key="show_3d"):
-            grid = risk_bands(scored, matrix)
-            surface = go.Figure(go.Surface(
-                z=grid.to_numpy(dtype=float), x=list(range(grid.shape[1])), y=list(range(grid.shape[0])),
-                colorscale=[[0, ON_TRACK], [0.5, "#F2F2F2"], [1, AT_RISK]], cmin=0, cmax=1,
-                colorbar={"title": "Average score"},
-            ))
-            surface.update_layout(height=520, margin={"t": 10}, scene={
-                "xaxis": {"title": "Average score band", "tickvals": list(range(grid.shape[1])),
-                          "ticktext": [str(c) for c in grid.columns]},
-                "yaxis": {"title": "Active days band", "tickvals": list(range(grid.shape[0])),
-                          "ticktext": [str(i) for i in grid.index]},
-                "zaxis": {"title": "Average risk score", "range": [0, 1]},
-            })
-            st.plotly_chart(surface, width="stretch")
-            st.caption(f"Aggregated bands of {pres} students; bands with fewer than {MIN_CELL} students are left out.")
+            bands = risk_band_table(scored, matrix)
+            if not bands["shown"].any():
+                st.info(f"No band of {pres} students has at least {MIN_CELL} students, so there is nothing to "
+                        f"show in 3D. {hidden_bands(bands)} smaller bands are hidden.")
+            else:
+                st.plotly_chart(band_figure(bands), width="stretch")
+                st.caption(f"Each marker is a band of {pres} students: height and colour show the band's average "
+                           f"risk score, size shows how many students it holds. {hidden_bands(bands)} bands with fewer "
+                           f"than {MIN_CELL} students are not shown. Drag to rotate; hover for details.")

@@ -38,14 +38,24 @@ def batch_summary(scored: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def risk_band_table(scored: pd.DataFrame, matrix: pd.DataFrame) -> pd.DataFrame:
+    """One row per (active-days band, average-score band): students, average risk score, and whether the
+    band is large enough to show (at least MIN_CELL students). Average score is NaN for hidden bands."""
+    m = scored.merge(matrix[KEY + ["active_days", "mean_score"]], on=KEY, how="left")
+    days = pd.cut(m["active_days"], DAY_BANDS[0], labels=DAY_BANDS[1]).rename("day_band")
+    scores = pd.cut(m["mean_score"], SCORE_BANDS[0], labels=SCORE_BANDS[1])
+    scores = scores.cat.add_categories("none yet").fillna("none yet").rename("score_band")
+    cells = m.groupby([days, scores], observed=False)["score"].agg(students="size", average_score="mean")
+    cells = cells.reset_index()
+    cells["shown"] = cells["students"] >= MIN_CELL
+    cells.loc[~cells["shown"], "average_score"] = float("nan")
+    return cells
+
+
 def risk_bands(scored: pd.DataFrame, matrix: pd.DataFrame) -> pd.DataFrame:
     """Average score by active-days band (rows) and average-score band (columns); small bands are NaN."""
-    m = scored.merge(matrix[KEY + ["active_days", "mean_score"]], on=KEY, how="left")
-    days = pd.cut(m["active_days"], DAY_BANDS[0], labels=DAY_BANDS[1])
-    scores = pd.cut(m["mean_score"], SCORE_BANDS[0], labels=SCORE_BANDS[1])
-    scores = scores.cat.add_categories("none yet").fillna("none yet")
-    cells = m.groupby([days, scores], observed=False)["score"].agg(["mean", "size"])
-    return cells["mean"].where(cells["size"] >= MIN_CELL).unstack()
+    t = risk_band_table(scored, matrix)
+    return t.pivot(index="day_band", columns="score_band", values="average_score")
 
 
 def is_training_presentation(presentation: str) -> bool:
