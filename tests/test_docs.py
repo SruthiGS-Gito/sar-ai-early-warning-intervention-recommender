@@ -61,3 +61,16 @@ def test_team_table_summary_holds_aggregates_only():
     assert all(r["students"] is None or r["students"] >= min_cell for r in groups)
     counts = [r["students"] for r in summary["retention_funnel"]["all_modules"]]
     assert all(n is None or n == 0 or n >= min_cell for n in counts)
+
+
+OULAD_LICENCE = '"This dataset is released under CC-BY 4.0 license."'
+OULAD_REFERENCE = ("Kuzilek J., Hlosta M., Zdrahal Z. Open University Learning Analytics dataset Sci. Data 4:170171 "
+                   "doi: 10.1038/sdata.2017.171 (2017).")
+
+
+@pytest.mark.parametrize("path", [PROJECT_ROOT / "README.md", DOCS / "app.md"])
+def test_dataset_licence_and_reference_are_quoted_from_the_source_page(path):
+    text = path.read_text(encoding="utf-8")
+    assert OULAD_LICENCE in text and OULAD_REFERENCE in text
+    assert "https://research.stem.open.ac.uk/ouanalyse/open-dataset-more/" in text
+    assert "CC BY 4.0" not in text

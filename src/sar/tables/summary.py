@@ -39,7 +39,8 @@ def summarise(dept: pd.DataFrame, fun: pd.DataFrame, prof: pd.DataFrame, selecti
     val = dept[dept["code_presentation"] == TEST_PRESENTATION]
     alls = fun[fun["code_module"] == funnel.ALL_MODULES]
     return {
-        "dataset": "OULAD (Kuzilek, Hlosta and Zdrahal 2017), CC BY 4.0",
+        "dataset": ("OULAD, released under CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/); "
+                    "Kuzilek J., Hlosta M., Zdrahal Z. Open University Learning Analytics dataset Sci. Data 4:170171 doi: 10.1038/sdata.2017.171 (2017)."),
         "cutoff_day": CUTOFF_DAY, "min_cell": MIN_CELL, "validation_presentation": TEST_PRESENTATION,
         "department_risk": {
             "rows": len(dept), "suppressed_rows": int(dept["suppressed"].sum()),
@@ -73,7 +74,7 @@ def _count(x) -> str:
 def render_block(s: dict) -> str:
     val, d, f, p = s["validation_presentation"], s["department_risk"], s["retention_funnel"], s["student_profiles"]
     lines = [START, "", f"Figures from the last run of `scripts/build_team_tables.py`. Groups and counts under "
-             f"{s['min_cell']} students are hidden. Source: {s['dataset']}.", ""]
+             f"{s['min_cell']} students are hidden. Source: {s['dataset'].rstrip('.')}.", ""]
 
     lines += [f"#### Department risk, {val} (validation)", "",
               "| Module | Students | At-risk rate | Low | Medium | High |", "|---|---:|---:|---:|---:|---:|"]

@@ -1,5 +1,5 @@
 {
-  "dataset": "OULAD (Kuzilek, Hlosta and Zdrahal 2017), CC BY 4.0",
+  "dataset": "OULAD, released under CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/); Kuzilek J., Hlosta M., Zdrahal Z. Open University Learning Analytics dataset Sci. Data 4:170171 doi: 10.1038/sdata.2017.171 (2017).",
   "cutoff_day": 30,
   "min_cell": 20,
   "validation_presentation": "2014J",
