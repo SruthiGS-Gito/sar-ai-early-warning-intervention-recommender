@@ -207,6 +207,30 @@ def team_table(name: str, processed_dir: str, heading: bool = True) -> pd.DataFr
     return status.table
 
 
+PROFILE_HEADERS = {"mean_total_clicks": ("Mean clicks", "{:,.0f}"),
+                   "mean_active_days": ("Mean active days", "{:.1f}"),
+                   "mean_trailing_inactive_days": ("Mean days inactive before Day 30", "{:.1f}"),
+                   "mean_n_submitted": ("Mean assessments submitted", "{:.2f}"),
+                   "mean_n_missed": ("Mean assessments missed", "{:.2f}")}
+SMALL = f"n < {MIN_CELL}"
+DASH = "\u2013"
+
+
+def small_cells(table: pd.DataFrame, view: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """`view` with the figures of suppressed groups replaced by the text "n < MIN_CELL"."""
+    hidden = table["suppressed"].astype(bool).to_numpy()
+    view = view.copy()
+    for c in columns:
+        view[c] = view[c].astype(object)
+        view.loc[hidden, c] = SMALL
+    return view
+
+
+def fmt(pattern: str):
+    """Formatter for Styler.format that leaves text (such as "n < 20") as it is and shows missing values as a dash."""
+    return lambda v: v if isinstance(v, str) else DASH if pd.isna(v) else pattern.format(v)
+
+
 def shown_rows(table: pd.DataFrame) -> pd.DataFrame:
     return table[~table["suppressed"].astype(bool)]
 
@@ -297,29 +321,34 @@ with dashboard:
         if (part["score_source"] == "training").any():
             st.info(DEPT_TRAINING_NOTE)
         bands = {s: s.removeprefix("share_").capitalize() for s in BAND_SHARES}
-        view = part.assign(score_source=part["score_source"].map(SCORE_SOURCE)).rename(
+        view = part[["code_module", "code_presentation", "score_source", "students", "at_risk_rate",
+                     *reversed(BAND_SHARES)]].assign(score_source=part["score_source"].map(SCORE_SOURCE)).rename(
             columns={"code_module": "Module", "code_presentation": "Presentation", "score_source": "Scores",
-                     "students": "Students", "at_risk_rate": "At-risk rate", "suppressed": "Hidden (small group)",
+                     "students": "Students", "at_risk_rate": "At-risk rate",
                      **{s: f"{b} band" for s, b in bands.items()}})
-        st.dataframe(view.style.format({c: "{:.0%}" for c in view.columns if c.endswith(("rate", "band"))},
-                                       na_rep="hidden"), hide_index=True)
+        pcts = [c for c in view.columns if c.endswith(("rate", "band"))]
+        view = small_cells(part, view, pcts)
+        st.dataframe(view.style.format({"Students": fmt("{:,}"), **{c: fmt("{:.0%}") for c in pcts}}),
+                     hide_index=True)
         st.markdown("##### Observed at-risk rate inside each band")
         st.caption(EVIDENCE_NOTE.format(n=MIN_CELL))
         base = part.loc[part["code_module"] == ALL_MODULES, "at_risk_rate"]
         base = float(base.iloc[0]) if len(base) else float("nan")
         evidence = part[["code_module"]].rename(columns={"code_module": "Module"})
-        for r, b in zip(BAND_RATES, BAND_SHARES):
+        for r, b in reversed(list(zip(BAND_RATES, BAND_SHARES))):
             name = bands[b]
             evidence[f"{name}: at-risk rate"] = part[r].to_numpy()
             evidence[f"{name}: lift"] = (part[r] / base).to_numpy()
         st.dataframe(evidence.style.format(
-            {c: ("{:.0%}" if c.endswith("rate") else "{:.2f}") for c in evidence.columns if ": " in c},
-            na_rep=f"n < {MIN_CELL}"), hide_index=True)
-        modules = shown_rows(part[part["code_module"] != ALL_MODULES])
-        fig = go.Figure([go.Bar(name=b, x=modules["code_module"], y=modules[s], marker_color=BAND_COLOURS[b])
+            {c: (fmt("{:.0%}") if c.endswith("rate") else fmt("{:.2f}")) for c in evidence.columns if ": " in c},
+            na_rep=SMALL), hide_index=True)
+        modules = shown_rows(part)
+        fig = go.Figure([go.Bar(name=b, x=modules["code_module"], y=modules[s], marker_color=BAND_COLOURS[b],
+                                texttemplate="%{y:.0%}", textposition="inside")
                          for s, b in bands.items()])
-        fig.update_layout(barmode="stack", yaxis_title="Share of students", yaxis_tickformat=".0%", height=320,
-                          margin={"t": 30}, legend={"orientation": "h"}, xaxis_title="Module")
+        fig.update_layout(barmode="stack", yaxis_title="Share of students", yaxis_tickformat=".0%", height=360,
+                          margin={"t": 50}, legend={"orientation": "h"}, xaxis_title="Module",
+                          title=f"Share of students in each risk band by module, {pres}")
         st.plotly_chart(fig, width="stretch")
 
     prof = team_table("student_profiles", processed)
@@ -329,21 +358,22 @@ with dashboard:
         scope = st.radio("Students", [s for s in scopes if s in set(prof["scope"])], format_func=scopes.get,
                          horizontal=True, key="profile_scope")
         st.caption(PROFILE_NOTE.format(val=TEST_PRESENTATION))
-        part = prof[prof["scope"] == scope]
-        means = {f"mean_{f}": f"Mean {f.replace('_', ' ')}" for f in PROFILE_FEATURES}
+        part = prof[prof["scope"] == scope].sort_values("at_risk_rate", ascending=False, na_position="last")
+        means = {f"mean_{f}": PROFILE_HEADERS[f"mean_{f}"] for f in PROFILE_FEATURES}
         view = part[["profile", "students", "share_of_scope", "at_risk_rate", *means]].rename(
             columns={"profile": "Profile", "students": "Students", "share_of_scope": "Share",
-                     "at_risk_rate": "At-risk rate", **means})
-        st.dataframe(view.style.format({"Share": "{:.0%}", "At-risk rate": "{:.0%}",
-                                        **{m: "{:,.1f}" for m in means.values()}}, na_rep="hidden"),
-                     hide_index=True)
+                     "at_risk_rate": "At-risk rate", **{m: h for m, (h, _) in means.items()}})
+        view = small_cells(part, view, ["At-risk rate", *(h for h, _ in means.values())])
+        st.dataframe(view.style.format({"Students": fmt("{:,}"), "Share": fmt("{:.0%}"), "At-risk rate": fmt("{:.0%}"),
+                                        **{h: fmt(f) for h, f in means.values()}}), hide_index=True)
         shown = shown_rows(part)
-        for _, row in shown.iterrows():
-            st.markdown(f"**{row['profile']}**: {row['description']}")
-        fig = go.Figure(go.Bar(x=shown["profile"], y=shown["at_risk_rate"], marker_color=AT_RISK,
+        with st.expander("What each profile means"):
+            for _, row in shown.iterrows():
+                st.markdown(f"**{row['profile']}**: {row['description']}")
+        fig = go.Figure(go.Bar(x=shown["profile"], y=shown["at_risk_rate"], marker_color=NEUTRAL,
                                text=[f"{r:.0%}" for r in shown["at_risk_rate"]], textposition="outside"))
         fig.update_layout(yaxis_title="Observed at-risk rate", yaxis_tickformat=".0%", yaxis_range=[0, 1],
-                          height=320, margin={"t": 30})
+                          height=340, margin={"t": 50}, title="Observed at-risk rate by profile")
         st.plotly_chart(fig, width="stretch")
 
 with funnel:
@@ -364,7 +394,8 @@ with funnel:
         shown = shown_rows(part)
         fig = go.Figure(go.Funnel(y=shown["stage"], x=shown["students"].astype(float), marker_color=ON_TRACK,
                                   texttemplate="%{value:,.0f} (%{percentInitial:.0%})"))
-        fig.update_layout(height=360, margin={"t": 30})
+        fig.update_layout(height=380, margin={"t": 50}, separators=".,",
+                          title=f"Students at each stage, {module}, {pres}")
         st.plotly_chart(fig, width="stretch")
         if len(shown) < len(part):
             st.caption(f"{len(part) - len(shown)} stages are hidden because of small counts.")
@@ -380,11 +411,11 @@ with funnel:
             columns={"stage": "Stage", "students": "Students", "share_of_registered": "Share of registered",
                      "share_of_previous": "Share of previous stage"})
         view["Students"] = [
-            "not applicable" if not a else "hidden" if pd.isna(n) else f"{int(n):,}"
+            "not applicable" if not a else SMALL if pd.isna(n) else f"{int(n):,}"
             for n, a in zip(part["students"], part["applicable"].astype(bool))]
         view.loc[~part["applicable"].astype(bool).to_numpy(), "Share of previous stage"] = float("nan")
-        st.dataframe(view.style.format({"Share of registered": "{:.0%}", "Share of previous stage": "{:.0%}"},
-                                       na_rep="\u2013"), hide_index=True)
+        st.dataframe(view.style.format({"Share of registered": fmt("{:.0%}"),
+                                        "Share of previous stage": fmt("{:.0%}")}), hide_index=True)
 
 with batch:
     st.subheader("Batch Report")
@@ -460,7 +491,8 @@ with batch:
             if edge > 0:
                 hist.add_vline(x=edge, line_dash="dash", annotation_text=f"{band} from {edge:.2f}")
         hist.update_layout(barmode="overlay", xaxis_title="Calibrated risk score", yaxis_title="Students",
-                           margin={"t": 30}, height=360, legend={"orientation": "h"})
+                           margin={"t": 50}, height=380, legend={"orientation": "h"}, separators=".,",
+                           title=f"Calibrated risk scores of {pres} students, with the band cutoffs")
         st.plotly_chart(hist, width="stretch")
 
         with st.expander("Flagged students (individual rows; for staff follow-up only)"):

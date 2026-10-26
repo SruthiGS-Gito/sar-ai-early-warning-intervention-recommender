@@ -288,3 +288,39 @@ def test_capacity_slider_accepts_any_share(synthetic_env, matrix):
     assert not at.exception
     n_val = int((matrix["code_presentation"] == "2014J").sum())
     assert {m.label: m.value for m in at.metric}["Flagged"] == f"{round(0.13 * n_val):,}"
+
+
+def _chart_specs(at) -> list[dict]:
+    import json
+
+    return [json.loads(c.proto.spec) for c in at.get("plotly_chart")]
+
+
+def test_tables_and_charts_are_formatted_for_reading(tables_env):
+    env, prof = tables_env
+    processed = env / "data" / "processed"
+    dept = pd.read_csv(processed / "department_risk.csv")
+    hide = (dept["code_presentation"] == "2014J") & (dept["code_module"] == "AAA")
+    rate_cols = ["at_risk_rate", "share_low", "share_medium", "share_high", "rate_low", "rate_medium", "rate_high"]
+    dept.loc[hide, rate_cols] = float("nan")
+    dept.loc[hide, "suppressed"] = True
+    dept.to_csv(processed / "department_risk.csv", index=False)
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception
+    frames = [df.value for df in at.dataframe]
+    view = [f for f in frames if "High band" in f.columns][0]
+    assert "Hidden (small group)" not in view.columns
+    assert view.loc[view["Module"] == "AAA", "At-risk rate"].iloc[0] == "n < 20"
+    profiles = [f for f in frames if "Mean clicks" in f.columns][0]
+    assert {"Mean active days", "Mean days inactive before Day 30", "Mean assessments submitted",
+            "Mean assessments missed"} <= set(profiles.columns)
+    rates = profiles["At-risk rate"].astype(float)
+    assert rates.is_monotonic_decreasing
+    assert any(e.label == "What each profile means" for e in at.expander)
+    specs = _chart_specs(at)
+    titles = [s["layout"].get("title", {}).get("text", "") for s in specs]
+    assert all(titles), titles
+    stacked = [s for s in specs if s["layout"]["title"]["text"].startswith("Share of students in each risk band")][0]
+    assert "All modules" in stacked["data"][0]["x"] and stacked["data"][0]["texttemplate"] == "%{y:.0%}"
+    bars = [s for s in specs if s["layout"]["title"]["text"] == "Observed at-risk rate by profile"][0]
+    assert bars["data"][0]["marker"]["color"] == "#8C8C8C"
