@@ -124,7 +124,8 @@ def test_app_with_synthetic_data_and_model(synthetic_env, matrix):
     text = _texts(at)
     band = [m for m in at.metric if m.label == "Risk band"]
     assert len(band) == 1 and band[0].value in {"Low", "Medium", "High"}
-    assert "Rank " in text and "Suggested support" in text
+    assert "risk band**: rank " in text and f"students in module {module} (2014J)" in text
+    assert "Suggested support" in text
     assert "most similar students from earlier presentations" in text and f"module {module}" in text
     assert "OULAD records no interventions" in text
     assert "provisional" not in text.lower()
@@ -434,3 +435,33 @@ def test_about_works_with_a_model_but_no_data(empty_env, small_final):
     assert not at.exception
     about = _about_text(at)
     assert "- Model built (UTC): 2026-01-01T00:00:00+00:00" in about and "- Day 30 data: not loaded" in about
+
+
+@pytest.mark.parametrize("band", ["High", "Low"])
+def test_example_buttons_choose_a_validation_student_in_the_band(synthetic_env, matrix, small_final, band):
+    from sar.service import views
+
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    module = at.selectbox(key="lookup_module").value
+    at.button(key=f"example_{band.lower()}").click().run()
+    assert not at.exception
+    assert at.selectbox(key="lookup_presentation").value == "2014J"
+    scored = views.score_presentation(small_final[0], matrix, "2014J")
+    expected = views.example_student(scored, band, module, 42)
+    assert (at.selectbox(key="lookup_module").value, at.selectbox(key="lookup_student").value) == expected
+    text = _texts(at)
+    assert f"**{band} risk band**: rank " in text and f"in module {expected[0]} (2014J)" in text
+    assert "Suggested support" in text and [m.value for m in at.metric if m.label == "Risk band"] == [band]
+    at.button(key=f"example_{band.lower()}").click().run()          # same seed, same student
+    assert at.selectbox(key="lookup_student").value == expected[1] and not at.exception
+
+
+def test_streamlit_config_sets_theme_and_minimal_toolbar():
+    import tomllib
+
+    config = tomllib.loads((PROJECT_ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8"))
+    assert config["client"]["toolbarMode"] == "minimal"
+    assert config["theme"]["base"] == "light" and config["theme"]["primaryColor"] == "#4C72B0"
+    assert config["server"]["address"] == "localhost"
+    source = (PROJECT_ROOT / "app" / "streamlit_app.py").read_text(encoding="utf-8")
+    assert 'st.set_page_config(page_title="Student Academic Risk: Day 30 early warning", layout="wide")' in source

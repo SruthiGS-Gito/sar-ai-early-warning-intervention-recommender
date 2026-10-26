@@ -29,7 +29,7 @@ import pandas as pd  # noqa: E402
 import plotly.graph_objects as go  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from sar.config import CUTOFF_DAY  # noqa: E402
+from sar.config import CUTOFF_DAY, RANDOM_SEED  # noqa: E402
 from sar.data.split import TEST_PRESENTATION, make_split, overlap_report  # noqa: E402
 from sar.explain.chart import explanation_table, plot_explanation  # noqa: E402
 from sar.explain.shap_explain import explain_student, explanation_from_contributions, make_explainer  # noqa: E402
@@ -57,7 +57,9 @@ from sar.service.views import (  # noqa: E402
     flag_outcome,
     flag_wide_net,
     flagged_by_band,
+    example_student,
     is_training_presentation,
+    module_rank,
     risk_band_edges,
     risk_band_table,
     score_presentation,
@@ -162,6 +164,8 @@ def get_table(name: str, processed_dir: str) -> TableStatus:
 
 def presentation_picker(matrix, key: str) -> str:
     options = sorted(matrix["code_presentation"].unique())
+    if key in st.session_state:          # set by a widget or an example button; no default needed
+        return st.selectbox("Presentation", options, key=key)
     default = options.index(TEST_PRESENTATION) if TEST_PRESENTATION in options else len(options) - 1
     return st.selectbox("Presentation", options, index=default, key=key)
 
@@ -244,7 +248,7 @@ def shown_rows(table: pd.DataFrame) -> pd.DataFrame:
     return table[~table["suppressed"].astype(bool)]
 
 
-st.set_page_config(page_title="SAR-AI early warning", layout="wide")
+st.set_page_config(page_title="Student Academic Risk: Day 30 early warning", layout="wide")
 st.title("Student Academic Risk: Day 30 early warning")
 
 paths = resolve_paths()
@@ -269,18 +273,41 @@ if core_ok:
 lookup, dashboard, funnel, batch, about = st.tabs(["Student Lookup", "Department Dashboard", "Retention Funnel",
                                                   "Batch Report", "About"])
 
+def show_example(band: str) -> None:
+    """Button callback: choose a validation student in `band` (fixed seed), in the current module when possible."""
+    scored = get_scores(processed, models, TEST_PRESENTATION, fitted, matrix)
+    current = st.session_state.get("lookup_module")
+    pick = example_student(scored, band, current, RANDOM_SEED)
+    st.session_state["lookup_example"] = band if pick is None else None
+    if pick is not None:
+        st.session_state["lookup_presentation"] = TEST_PRESENTATION
+        st.session_state["lookup_module"], st.session_state["lookup_student"] = pick
+
+
 with lookup:
     st.subheader("Student Lookup")
     if not core_ok:
         core_message()
     else:
+        b1, b2, _ = st.columns([1, 1, 2])
+        b1.button("Show an example High-risk student", key="example_high", on_click=show_example, args=("High",))
+        b2.button("Show an example Low-risk student", key="example_low", on_click=show_example, args=("Low",))
+        if st.session_state.get("lookup_example"):
+            st.info(f"No {TEST_PRESENTATION} student is in the {st.session_state['lookup_example']} band.")
+        st.caption(f"Examples are drawn from {TEST_PRESENTATION}, the validation presentation, with a fixed seed: "
+                   "from the chosen module when it has a student in that band, otherwise from any module.")
         c1, c2, c3 = st.columns(3)
         with c1:
             pres = presentation_picker(matrix, "lookup_presentation")
         in_pres = matrix[matrix["code_presentation"] == pres]
         module = c2.selectbox("Module", sorted(in_pres["code_module"].unique()), key="lookup_module")
         ids = sorted(in_pres.loc[in_pres["code_module"] == module, "id_student"].unique())
-        sid = c3.selectbox("Student ID", ids, index=None, placeholder="Choose a student", key="lookup_student")
+        if st.session_state.get("lookup_student") not in ids:
+            st.session_state.pop("lookup_student", None)
+        if "lookup_student" in st.session_state:
+            sid = c3.selectbox("Student ID", ids, placeholder="Choose a student", key="lookup_student")
+        else:
+            sid = c3.selectbox("Student ID", ids, index=None, placeholder="Choose a student", key="lookup_student")
         if sid is None:
             st.caption(f"{len(ids):,} students in {module} {pres}. Choose one to see why the model scores them "
                        "as it does and which support fits.")
@@ -298,7 +325,9 @@ with lookup:
                 plt.close(fig)
             with right:
                 st.metric("Risk band", str(me["band"]), help=BAND_HELP.format(**{k.lower(): v for k, v in edges.items()}))
-                st.caption(f"Rank {int(me['rank']):,} of {len(scored):,} students in {pres} by calibrated risk.")
+                rank, n_module = module_rank(scored, module, sid)
+                st.markdown(f"**{me['band']} risk band**: rank {rank:,} of {n_module:,} students in module "
+                            f"{module} ({pres}) by calibrated risk.")
                 st.write(expl.sentence)
             st.markdown("#### Suggested support")
             pool_l = get_pool(processed, matrix)

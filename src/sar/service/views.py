@@ -70,6 +70,26 @@ def score_presentation(fitted: dict, matrix: pd.DataFrame, presentation: str) ->
     return out
 
 
+def module_rank(scored: pd.DataFrame, module: str, student: int) -> tuple[int, int]:
+    """(rank, students) of one student within their module by risk_order; rank 1 is the highest risk."""
+    part = scored[scored["code_module"] == module].reset_index(drop=True)
+    rank = np.empty(len(part), dtype=int)
+    rank[risk_order(part["score"], part["raw_score"])] = np.arange(1, len(part) + 1)
+    return int(rank[part.index[part["id_student"] == student][0]]), len(part)
+
+
+def example_student(scored: pd.DataFrame, band: str, module: str | None, seed: int) -> tuple[str, int] | None:
+    """(module, student) drawn with a fixed seed from the students in `band`: from `module` when it has
+    any, otherwise from the whole cohort. None when no student is in the band."""
+    pool = scored[scored["band"] == band]
+    if module is not None and (pool["code_module"] == module).any():
+        pool = pool[pool["code_module"] == module]
+    if pool.empty:
+        return None
+    pick = pool.sort_values(["code_module", "id_student"]).iloc[np.random.default_rng(seed).integers(len(pool))]
+    return str(pick["code_module"]), int(pick["id_student"])
+
+
 @dataclass
 class Flagging:
     rule: str                 # "capacity" or "wide_net"

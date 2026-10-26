@@ -8,7 +8,7 @@ python scripts/precompute_shap.py    # optional: explanations for the validation
 streamlit run app/streamlit_app.py
 ```
 - The app opens at http://localhost:8501.
-- `.streamlit/config.toml` serves it on this machine only, because the app shows individual student records. Do not change the address to share it.
+- `.streamlit/config.toml` serves it on this machine only, because the app shows individual student records. Do not change the address to share it. It also sets a light theme in the chart colours and a minimal toolbar, which hides developer items such as the Deploy button.
 - `SAR_DATA_DIR` and `SAR_MODELS_DIR` point the app at other folders.
 
 ## Model
@@ -38,7 +38,7 @@ The Batch Report offers two rules.
 ## Tabs
 | Tab | Shows | Source |
 |---|---|---|
-| Student Lookup | Pick a presentation, module and student to see the risk band, the rank, the SHAP chart, the plain-language sentence, and up to three support types with similar-student context | SCRUM-187, SCRUM-188 |
+| Student Lookup | Pick a presentation, module and student, or use "Show an example High-risk student" or "Show an example Low-risk student" (a 2014J student in that band, drawn with a fixed seed from the chosen module when it has one), to see a summary line (band, rank within the module, module), the SHAP chart, the plain-language sentence, and up to three support types with similar-student context | SCRUM-187, SCRUM-188 |
 | Department Dashboard | A one-sentence introduction, department risk for the validation presentation (or an opted-in training presentation, named in a caption): band shares, at-risk rates, the at-risk rate and lift inside each band, and a stacked band-share chart; then the student profiles (table, descriptions and at-risk rate chart). OULAD has modules, not departments, so each department row is a module | tickets 203 and 210 |
 | Retention Funnel | The six-stage funnel for a chosen presentation and module (chart and table), with a note that it is retrospective | ticket 207 |
 | Batch Report | For a presentation: the flagging rule; students, flagged, at-risk caught and missed, precision and recall for that rule; flagged students per risk band; a by-module table with students per risk band and, for the validation presentation, each module's at-risk rate, recall and precision; the observed at-risk rate and lift inside each band; and a calibration chart for the validation presentation (observed at-risk rate against mean calibrated score in ten bins, with the diagonal and bin counts). Capacity can apply to the whole cohort (default) or to each module separately. The flagged list (closed expander, CSV download with band and rank) and an optional 3D view of average risk by activity and score bands (bands under 20 students hidden) are opt-in | final model |

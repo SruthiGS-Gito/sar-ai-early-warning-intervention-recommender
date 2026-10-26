@@ -4,3 +4,16 @@ address = "localhost"
 
 [browser]
 gatherUsageStats = false
+
+# Hide developer items such as the Deploy button; viewers keep the basic menu.
+[client]
+toolbarMode = "minimal"
+
+# Light theme in the colours the charts use (the "on track" blue as the accent).
+[theme]
+base = "light"
+primaryColor = "#4C72B0"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F2F4F7"
+textColor = "#1F2933"
+font = "sans-serif"

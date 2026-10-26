@@ -276,3 +276,27 @@ def test_calibration_bins_follow_the_reliability_table(matrix, small_final):
     assert cal["students"].sum() == len(scored) and list(cal["students"]) == [r["count"] for r in rel]
     assert np.allclose(cal["observed_rate"], [r["observed_rate"] for r in rel])
     assert np.allclose(cal["mean_score"], [r["mean_predicted"] for r in rel])
+
+
+def test_module_rank_orders_students_within_their_module(matrix, small_final):
+    fitted, _ = small_final
+    scored = views.score_presentation(fitted, matrix, "2014J")
+    module = scored["code_module"].iloc[0]
+    part = scored[scored["code_module"] == module]
+    ranks = [views.module_rank(scored, module, sid)[0] for sid in part["id_student"]]
+    assert sorted(ranks) == list(range(1, len(part) + 1))
+    top = part.iloc[views.risk_order(part["score"], part["raw_score"])[0]]
+    assert views.module_rank(scored, module, top["id_student"]) == (1, len(part))
+
+
+def test_example_student_is_fixed_by_the_seed_and_prefers_the_module(matrix, small_final):
+    fitted, _ = small_final
+    scored = views.score_presentation(fitted, matrix, "2014J")
+    for band in ["High", "Low"]:
+        module, sid = views.example_student(scored, band, "BBB", 42)
+        row = scored[(scored["code_module"] == module) & (scored["id_student"] == sid)].iloc[0]
+        assert row["band"] == band
+        if ((scored["band"] == band) & (scored["code_module"] == "BBB")).any():
+            assert module == "BBB"
+        assert views.example_student(scored, band, "BBB", 42) == (module, sid)
+    assert views.example_student(scored.assign(band="Low"), "High", None, 42) is None
