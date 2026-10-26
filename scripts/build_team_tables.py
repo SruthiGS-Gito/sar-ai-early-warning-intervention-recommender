@@ -49,8 +49,7 @@ for name, table in tables.items():
     table.to_csv(path, index=False)
     print(f"{path.name}: {len(table):,} rows, {int(table['suppressed'].sum())} suppressed")
 
-no_due = matrix.groupby("code_module")["n_assessments_due"].max()
-summary = summarise(*tables.values(), profiles["selection"], profiles["k"], list(no_due[no_due == 0].index))
+summary = summarise(*tables.values(), profiles["selection"], profiles["k"])
 summary_path = PROJECT_ROOT / "reports" / "team_tables.json"
 summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 docs = PROJECT_ROOT / "docs" / "app.md"

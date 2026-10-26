@@ -24,8 +24,19 @@ def registrations(matrix):
 
 
 @pytest.fixture(scope="module")
-def fun(matrix, registrations):
-    return funnel.retention_funnel(*registrations, matrix)
+def fmatrix(matrix):
+    """The synthetic matrix with no assessment due by the cutoff in module GGG, and almost no
+    early submissions there, as in OULAD modules EEE and GGG."""
+    m = matrix.copy()
+    ggg = m["code_module"] == "GGG"
+    m.loc[ggg, ["n_assessments_due", "n_missed"]] = 0
+    m.loc[ggg & (m["id_student"] % 10 != 0), "n_submitted"] = 0
+    return m
+
+
+@pytest.fixture(scope="module")
+def fun(fmatrix, registrations):
+    return funnel.retention_funnel(*registrations, fmatrix)
 
 
 @pytest.fixture(scope="module")
@@ -89,15 +100,15 @@ def test_funnel_columns_and_stage_order(fun):
         assert list(g["stage_key"]) == [k for k, _ in funnel.STAGES]
 
 
-def test_funnel_counts_add_up(matrix, registrations):
+def test_funnel_counts_add_up(fmatrix, registrations):
     info, _ = registrations
-    true = funnel.retention_funnel(*registrations, matrix, min_cell=1)
+    true = funnel.retention_funnel(*registrations, fmatrix, min_cell=1)
     by_stage = true.set_index(GROUP + ["stage_key"])["students"]
     registered = true[true["stage_key"] == "registered"]
     total = registered[registered["code_module"] == funnel.ALL_MODULES].set_index("code_presentation")["students"]
     assert (info.groupby("code_presentation").size() == total).all()
     still = true[(true["stage_key"] == "still_registered") & (true["code_module"] == funnel.ALL_MODULES)]
-    assert (matrix.groupby("code_presentation").size() == still.set_index("code_presentation")["students"]).all()
+    assert (fmatrix.groupby("code_presentation").size() == still.set_index("code_presentation")["students"]).all()
     modules = _modules(true).groupby(["code_presentation", "stage_key"])["students"].sum()
     alls = true[true["code_module"] == funnel.ALL_MODULES].set_index(["code_presentation", "stage_key"])["students"]
     assert (modules == alls.loc[modules.index]).all()
@@ -113,9 +124,9 @@ def test_funnel_shares_are_proportions(fun):
 
 
 @pytest.mark.parametrize("min_cell", [MIN_CELL, 40])
-def test_funnel_hides_small_counts_and_their_complements(matrix, registrations, min_cell):
-    t = funnel.retention_funnel(*registrations, matrix, min_cell=min_cell)
-    true = funnel.retention_funnel(*registrations, matrix, min_cell=1)["students"]
+def test_funnel_hides_small_counts_and_their_complements(fmatrix, registrations, min_cell):
+    t = funnel.retention_funnel(*registrations, fmatrix, min_cell=min_cell)
+    true = funnel.retention_funnel(*registrations, fmatrix, min_cell=1)["students"]
     shown = t["students"].dropna()
     assert not shown.between(1, min_cell - 1).any()
     assert t.loc[t["suppressed"], ["students", "share_of_registered", "share_of_previous"]].isna().all().all()
@@ -126,6 +137,34 @@ def test_funnel_hides_small_counts_and_their_complements(matrix, registrations, 
             assert len(hidden) >= 2 and true[hidden].sum() >= min_cell
     if min_cell == 40:
         assert t["suppressed"].any()
+
+
+def test_funnel_marks_the_submission_stage_not_applicable_without_assessments_due(fmatrix, registrations):
+    true = funnel.retention_funnel(*registrations, fmatrix, min_cell=1)
+    na = true[~true["applicable"]]
+    assert set(na["code_module"]) == {"GGG"} and set(na["stage_key"]) == {funnel.SCHEDULE_STAGE}
+    assert len(na) == fmatrix.loc[fmatrix["code_module"] == "GGG", "code_presentation"].nunique()
+    stages = true.set_index(GROUP + ["stage_key"])["students"]
+    for _, row in na.iterrows():
+        g = (row["code_presentation"], row["code_module"])
+        assert row["students"] == stages[(*g, "active_vle")]
+        assert row["share_of_previous"] == 1.0
+    others = true[true["code_module"] != "GGG"]
+    assert others["applicable"].all()
+
+
+def test_funnel_stage_counts_never_increase(fun, fmatrix, registrations):
+    for t in [fun, funnel.retention_funnel(*registrations, fmatrix, min_cell=1)]:
+        for _, g in t.groupby(GROUP):
+            counts = g.sort_values("stage_order")["students"].dropna().astype(int)
+            assert counts.is_monotonic_decreasing, g
+
+
+def test_funnel_carries_counts_forward_only_where_nothing_was_due(fmatrix, registrations):
+    flags = funnel.stage_flags(*registrations, fmatrix)
+    due = flags["submission_due"]
+    assert not due[flags["code_module"] == "GGG"].any() and due[flags["code_module"] != "GGG"].all()
+    assert (flags.loc[~due, "submitted"] == flags.loc[~due, "active_vle"]).all()
 
 
 # Student profiles (ticket 210)

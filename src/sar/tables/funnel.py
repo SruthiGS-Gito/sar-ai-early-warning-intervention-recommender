@@ -10,6 +10,11 @@ counts the students of the previous stage who also meet its condition.
   5. not withdrawn    final outcome is not Withdrawn
   6. passed           final outcome is Pass or Distinction
 
+Stage 4 does not apply to a module presentation with no assessment due by Day 30 (as recorded in
+the matrix's n_assessments_due): there it would measure the course schedule, not the student. Its
+row is marked `applicable` = False and carries the stage 3 count forward, so stages 5 and 6 are
+not shrunk by the schedule. "All modules" rows add up the module rows, carried counts included.
+
 Stages 5 and 6 use final outcomes. They describe what happened after Day 30 and are not model
 inputs. Counts from 1 to MIN_CELL - 1 are blanked and marked `suppressed`, together with enough
 other modules that the "All modules" total cannot reveal them (see _suppress); zero is shown.
@@ -30,24 +35,29 @@ STAGES = (
     ("not_withdrawn", "Did not withdraw"),
     ("passed", "Passed"),
 )
+SCHEDULE_STAGE = "submitted"
 COLUMNS = ("code_module", "code_presentation", "stage_order", "stage_key", "stage", "students",
-           "share_of_registered", "share_of_previous", "suppressed")
+           "share_of_registered", "share_of_previous", "applicable", "suppressed")
 
 
 def stage_flags(student_info: pd.DataFrame, registration: pd.DataFrame, matrix: pd.DataFrame,
                 cutoff_day: int = CUTOFF_DAY) -> pd.DataFrame:
-    """One row per enrolment with a boolean column per stage (nested). Kept in memory only."""
+    """One row per enrolment with a boolean column per stage (nested), and `submission_due`: whether
+    any assessment was due by the cutoff in that module presentation. Kept in memory only."""
     info = student_info[KEY + ["final_result"]].drop_duplicates(KEY)
     pop = day30_population({"studentInfo": info, "studentRegistration": registration}, cutoff_day)
     df = info.merge(pop.assign(still_registered=True), on=KEY, how="left")
     df = df.merge(matrix[KEY + ["active_days", "n_submitted"]], on=KEY, how="left")
+    due = matrix.groupby(["code_module", "code_presentation"])["n_assessments_due"].max().gt(0)
+    df = df.merge(due.rename("submission_due").reset_index(), on=["code_module", "code_presentation"], how="left")
+    df["submission_due"] = df["submission_due"].fillna(True).astype(bool)
     df["registered"] = True
     df["still_registered"] = df["still_registered"].fillna(False).astype(bool)
     df["active_vle"] = df["still_registered"] & (df["active_days"].fillna(0) > 0)
-    df["submitted"] = df["active_vle"] & (df["n_submitted"].fillna(0) > 0)
+    df["submitted"] = df["active_vle"] & ((df["n_submitted"].fillna(0) > 0) | ~df["submission_due"])
     df["not_withdrawn"] = df["submitted"] & (df["final_result"] != "Withdrawn")
     df["passed"] = df["not_withdrawn"] & df["final_result"].isin(ON_TRACK)
-    return df[KEY + [k for k, _ in STAGES]]
+    return df[KEY + [k for k, _ in STAGES] + ["submission_due"]]
 
 
 def _suppress(counts: pd.DataFrame, min_cell: int) -> pd.Series:
@@ -78,9 +88,11 @@ def retention_funnel(student_info: pd.DataFrame, registration: pd.DataFrame, mat
     rows = []
     for pres, p in flags.groupby("code_presentation"):
         for module, g in [*p.groupby("code_module"), (ALL_MODULES, p)]:
+            applies = module == ALL_MODULES or bool(g["submission_due"].any())
             for i, (key, label) in enumerate(STAGES, 1):
                 rows.append({"code_module": module, "code_presentation": pres, "stage_order": i, "stage_key": key,
-                             "stage": label, "students": int(g[key].sum())})
+                             "stage": label, "students": int(g[key].sum()),
+                             "applicable": applies or key != SCHEDULE_STAGE})
     out = pd.DataFrame(rows)
     out["suppressed"] = _suppress(out, min_cell)
     shown = out["students"].where(~out["suppressed"]).astype(float)

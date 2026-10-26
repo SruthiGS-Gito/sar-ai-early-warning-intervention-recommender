@@ -75,10 +75,38 @@
   },
   "retention_funnel": {
     "rows": 156,
-    "suppressed_rows": 14,
-    "modules_without_assessment_due": [
-      "EEE",
-      "GGG"
+    "suppressed_rows": 0,
+    "not_applicable": [
+      {
+        "code_module": "EEE",
+        "code_presentation": "2013J",
+        "stage": "Submitted an assessment by Day 30"
+      },
+      {
+        "code_module": "EEE",
+        "code_presentation": "2014B",
+        "stage": "Submitted an assessment by Day 30"
+      },
+      {
+        "code_module": "EEE",
+        "code_presentation": "2014J",
+        "stage": "Submitted an assessment by Day 30"
+      },
+      {
+        "code_module": "GGG",
+        "code_presentation": "2013J",
+        "stage": "Submitted an assessment by Day 30"
+      },
+      {
+        "code_module": "GGG",
+        "code_presentation": "2014B",
+        "stage": "Submitted an assessment by Day 30"
+      },
+      {
+        "code_module": "GGG",
+        "code_presentation": "2014J",
+        "stage": "Submitted an assessment by Day 30"
+      }
     ],
     "all_modules": [
       {
@@ -148,22 +176,22 @@
         "code_presentation": "2013J",
         "stage_order": 4,
         "stage": "Submitted an assessment by Day 30",
-        "students": 5358,
-        "share_of_registered": 0.6058
+        "students": 6898,
+        "share_of_registered": 0.7799
       },
       {
         "code_presentation": "2013J",
         "stage_order": 5,
         "stage": "Did not withdraw",
-        "students": 4520,
-        "share_of_registered": 0.511
+        "students": 5925,
+        "share_of_registered": 0.6699
       },
       {
         "code_presentation": "2013J",
         "stage_order": 6,
         "stage": "Passed",
-        "students": 3339,
-        "share_of_registered": 0.3775
+        "students": 4346,
+        "share_of_registered": 0.4914
       },
       {
         "code_presentation": "2014B",
@@ -190,22 +218,22 @@
         "code_presentation": "2014B",
         "stage_order": 4,
         "stage": "Submitted an assessment by Day 30",
-        "students": 4629,
-        "share_of_registered": 0.5932
+        "students": 5764,
+        "share_of_registered": 0.7386
       },
       {
         "code_presentation": "2014B",
         "stage_order": 5,
         "stage": "Did not withdraw",
-        "students": 3701,
-        "share_of_registered": 0.4742
+        "students": 4711,
+        "share_of_registered": 0.6037
       },
       {
         "code_presentation": "2014B",
         "stage_order": 6,
         "stage": "Passed",
-        "students": 2616,
-        "share_of_registered": 0.3352
+        "students": 3286,
+        "share_of_registered": 0.4211
       },
       {
         "code_presentation": "2014J",
@@ -232,22 +260,22 @@
         "code_presentation": "2014J",
         "stage_order": 4,
         "stage": "Submitted an assessment by Day 30",
-        "students": 7075,
-        "share_of_registered": 0.6283
+        "students": 8466,
+        "share_of_registered": 0.7519
       },
       {
         "code_presentation": "2014J",
         "stage_order": 5,
         "stage": "Did not withdraw",
-        "students": 5823,
-        "share_of_registered": 0.5171
+        "students": 7015,
+        "share_of_registered": 0.623
       },
       {
         "code_presentation": "2014J",
         "stage_order": 6,
         "stage": "Passed",
-        "students": 4459,
-        "share_of_registered": 0.396
+        "students": 5351,
+        "share_of_registered": 0.4752
       }
     ]
   },

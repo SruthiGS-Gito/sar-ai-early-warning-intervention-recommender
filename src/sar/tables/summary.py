@@ -35,7 +35,7 @@ def _records(df: pd.DataFrame, columns) -> list[dict]:
 
 
 def summarise(dept: pd.DataFrame, fun: pd.DataFrame, prof: pd.DataFrame, selection: pd.DataFrame,
-              k: int, no_assessment_due: list[str]) -> dict:
+              k: int) -> dict:
     val = dept[dept["code_presentation"] == TEST_PRESENTATION]
     alls = fun[fun["code_module"] == funnel.ALL_MODULES]
     return {
@@ -47,7 +47,8 @@ def summarise(dept: pd.DataFrame, fun: pd.DataFrame, prof: pd.DataFrame, selecti
         },
         "retention_funnel": {
             "rows": len(fun), "suppressed_rows": int(fun["suppressed"].sum()),
-            "modules_without_assessment_due": sorted(no_assessment_due),
+            "not_applicable": _records(fun.loc[~fun["applicable"].astype(bool)].sort_values(
+                ["code_module", "code_presentation"]), ["code_module", "code_presentation", "stage"]),
             "all_modules": _records(alls, ["code_presentation", "stage_order", "stage", "students",
                                            "share_of_registered"]),
         },
@@ -90,9 +91,10 @@ def render_block(s: dict) -> str:
         cells = [by[(q, order)] for q in pres]
         lines.append(f"| {label} | " + " | ".join(f"{_count(c['students'])} ({_pct(c['share_of_registered'])})"
                                                   for c in cells) + " |")
-    no_due = ", ".join(f["modules_without_assessment_due"]) or "none"
-    lines += ["", f"Modules with no assessment due by Day {s['cutoff_day']}: {no_due}. Rows in the table: "
-              f"{f['rows']}; hidden counts: {f['suppressed_rows']}.", ""]
+    na = ", ".join(f"{r['code_module']} {r['code_presentation']}" for r in f["not_applicable"]) or "none"
+    lines += ["", f"Submission stage not applicable (no assessment due by Day {s['cutoff_day']}; previous count "
+              f"carried forward, also in the totals above): {na}. Rows in the table: {f['rows']}; "
+              f"hidden counts: {f['suppressed_rows']}.", ""]
 
     lines += ["#### Student profiles", "", "| k | Silhouette | Smallest cluster (share of training rows) |",
               "|---:|---:|---:|"]

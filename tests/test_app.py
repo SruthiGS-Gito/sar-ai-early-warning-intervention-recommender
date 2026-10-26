@@ -145,6 +145,7 @@ def test_team_tables_are_shown_with_charts(tables_env):
     for title in ["Department risk", "Retention funnel", "Student profiles"]:
         assert f"#### {title}" in text and f"{title}: " in text
     assert "Retrospective, descriptive view" in text and "not model inputs" in text
+    assert "Counts under 20 are hidden" in text and "{" not in text
     validation = prof[prof["scope"] == "validation"]
     for _, row in validation.iterrows():
         assert f"**{row['profile']}**: {row['description']}" in text
@@ -179,3 +180,20 @@ def test_missing_columns_are_named_on_the_card(synthetic_env):
     text = _texts(at)
     assert "**Status:** Missing required columns" in text
     assert "missing expected columns: code_module, code_presentation, stage_order, stage_key, students" in text
+
+
+def test_funnel_shows_a_stage_that_does_not_apply_as_not_applicable(synthetic_env, matrix):
+    from conftest import synthetic_registrations
+
+    from sar.tables import funnel
+
+    no_due = matrix.assign(n_assessments_due=matrix["n_assessments_due"].where(matrix["code_module"] != "GGG", 0))
+    table = funnel.retention_funnel(*synthetic_registrations(matrix), no_due)
+    table.to_csv(synthetic_env / "data" / "processed" / "retention_funnel.csv", index=False)
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    at.selectbox(key="funnel_module").set_value("GGG").run()
+    assert not at.exception
+    assert "submission stage is not applicable" in _texts(at)
+    funnel_view = [df.value for df in at.dataframe if "Stage" in df.value.columns][0]
+    assert "not applicable" in set(funnel_view["Students"])
+    assert funnel_view["Stage"].str.endswith("(not applicable)").sum() == 1

@@ -59,7 +59,7 @@ The code is in `sar.tables`. The script writes the tables to `data/processed/` a
 | File | Ticket | One row per | Columns |
 |---|---|---|---|
 | `department_risk.csv` | 203 (SCRUM-178) | module and presentation, plus an "All modules" row per presentation | `code_module`, `code_presentation`, `score_source`, `students`, `at_risk_rate`, `share_low`, `share_medium`, `share_high`, `suppressed` |
-| `retention_funnel.csv` | 207 (SCRUM-177) | stage, module and presentation, plus "All modules" rows | `code_module`, `code_presentation`, `stage_order`, `stage_key`, `stage`, `students`, `share_of_registered`, `share_of_previous`, `suppressed` |
+| `retention_funnel.csv` | 207 (SCRUM-177) | stage, module and presentation, plus "All modules" rows | `code_module`, `code_presentation`, `stage_order`, `stage_key`, `stage`, `students`, `share_of_registered`, `share_of_previous`, `applicable`, `suppressed` |
 | `student_profiles.csv` | 210 (SCRUM-183) | profile and scope (validation or training) | `scope`, `presentations`, `profile`, `cluster`, `description`, `students`, `share_of_scope`, `at_risk_rate`, `mean_<feature>` for each profile feature, `suppressed` |
 
 ### Definitions
@@ -73,7 +73,7 @@ The code is in `sar.tables`. The script writes the tables to `data/processed/` a
 5. Did not withdraw: final outcome is not Withdrawn.
 6. Passed: final outcome is Pass or Distinction.
 
-Stages 1 to 4 use data available on Day 30. Stages 5 and 6 use final outcomes; they describe what happened after Day 30 and are not model inputs. In modules with no assessment due by Day 30, stage 4 counts only early submissions, so stages 4 to 6 are much smaller there than in other modules.
+Stages 1 to 4 use data available on Day 30. Stages 5 and 6 use final outcomes; they describe what happened after Day 30 and are not model inputs. Where a module presentation has no assessment due by Day 30, stage 4 would measure the course schedule rather than the student, so it is marked not applicable (`applicable` = False) and the stage 3 count is carried forward into stages 4 to 6.
 
 **Student profiles.** KMeans clusters of five Day 30 engagement and submission features: `total_clicks` (log-transformed before scaling), `active_days`, `trailing_inactive_days`, `n_submitted` and `n_missed`. None of the six protected attributes, no assessment score and no outcome is a clustering input. The scaler and the clusters are fitted on the training presentations (after removing students who also appear in the validation presentation); validation students are then assigned to the nearest cluster.
 - **Number of clusters:** the k from 3 to 5 with the highest silhouette score on the training rows (a fixed sample of 10,000 rows, seed 42). The chosen solution was then checked for interpretability: each cluster has a distinct centroid pattern and a distinct at-risk rate.
@@ -124,11 +124,11 @@ Students at each stage, with the share of registered students in brackets.
 | Registered | 4,684 (100%) | 8,845 (100%) | 7,804 (100%) | 11,260 (100%) |
 | Still registered after Day 30 | 4,111 (88%) | 7,655 (87%) | 6,497 (83%) | 9,203 (82%) |
 | Active in the VLE by Day 30 | 3,984 (85%) | 7,372 (83%) | 6,272 (80%) | 8,982 (80%) |
-| Submitted an assessment by Day 30 | 3,660 (78%) | 5,358 (61%) | 4,629 (59%) | 7,075 (63%) |
-| Did not withdraw | 3,048 (65%) | 4,520 (51%) | 3,701 (47%) | 5,823 (52%) |
-| Passed | 2,077 (44%) | 3,339 (38%) | 2,616 (34%) | 4,459 (40%) |
+| Submitted an assessment by Day 30 | 3,660 (78%) | 6,898 (78%) | 5,764 (74%) | 8,466 (75%) |
+| Did not withdraw | 3,048 (65%) | 5,925 (67%) | 4,711 (60%) | 7,015 (62%) |
+| Passed | 2,077 (44%) | 4,346 (49%) | 3,286 (42%) | 5,351 (48%) |
 
-Modules with no assessment due by Day 30: EEE, GGG. Rows in the table: 156; hidden counts: 14.
+Submission stage not applicable (no assessment due by Day 30; previous count carried forward, also in the totals above): EEE 2013J, EEE 2014B, EEE 2014J, GGG 2013J, GGG 2014B, GGG 2014J. Rows in the table: 156; hidden counts: 0.
 
 #### Student profiles
 

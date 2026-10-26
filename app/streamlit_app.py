@@ -73,9 +73,9 @@ DEPT_TRAINING_NOTE = ("Training presentation: the model learned from these stude
                       "validation presentation.")
 FUNNEL_NOTE = ("Retrospective, descriptive view. Stages up to Day 30 use data available on Day 30; the last two "
                "stages use final outcomes, which are not model inputs. Each stage counts the students of the previous "
-               "stage who also meet its condition. In modules with no assessment due by Day 30, the submission stage "
-               f"counts only early submissions. Counts under {MIN_CELL} are hidden, together with enough other "
-               "modules that the total cannot reveal them.")
+               "stage who also meet its condition. Where no assessment was due by Day 30, the submission stage is not "
+               f"applicable and the previous count is carried forward. Counts under {MIN_CELL} are hidden, together "
+               "with enough other modules that the total cannot reveal them.")
 PROFILE_NOTE = ("Profiles from KMeans on five Day 30 engagement and submission features, without background "
                 "characteristics. Clusters were fitted on the training presentations; {val} students are assigned "
                 "to the nearest one. The at-risk rate comes from final outcomes and is not a clustering input.")
@@ -317,6 +317,8 @@ with funnel:
         module = c2.selectbox("Module", [ALL_MODULES, *sorted(set(in_pres["code_module"]) - {ALL_MODULES})],
                               key="funnel_module")
         part = in_pres[in_pres["code_module"] == module].sort_values("stage_order")
+        part = part.assign(stage=part["stage"].where(part["applicable"].astype(bool),
+                                                     part["stage"] + " (not applicable)"))
         shown = shown_rows(part)
         fig = go.Figure(go.Funnel(y=shown["stage"], x=shown["students"].astype(float), marker_color=ON_TRACK,
                                   textinfo="value+percent initial"))
@@ -324,11 +326,18 @@ with funnel:
         st.plotly_chart(fig, width="stretch")
         if len(shown) < len(part):
             st.caption(f"{len(part) - len(shown)} stages are hidden because of small counts.")
+        if not part["applicable"].astype(bool).all():
+            st.caption(f"No assessment was due by Day 30 in {module} {pres}, so the submission stage is not "
+                       "applicable; the later stages start from the previous stage's count.")
         view = part[["stage", "students", "share_of_registered", "share_of_previous"]].rename(
             columns={"stage": "Stage", "students": "Students", "share_of_registered": "Share of registered",
                      "share_of_previous": "Share of previous stage"})
+        view["Students"] = [
+            "not applicable" if not a else "hidden" if pd.isna(n) else f"{int(n):,}"
+            for n, a in zip(part["students"], part["applicable"].astype(bool))]
+        view.loc[~part["applicable"].astype(bool).to_numpy(), "Share of previous stage"] = float("nan")
         st.dataframe(view.style.format({"Share of registered": "{:.0%}", "Share of previous stage": "{:.0%}"},
-                                       na_rep="hidden"), hide_index=True)
+                                       na_rep="n/a"), hide_index=True)
 
 with batch:
     st.subheader("Batch Report")
