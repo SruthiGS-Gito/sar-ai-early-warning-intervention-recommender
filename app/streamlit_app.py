@@ -9,9 +9,9 @@ Tabs: Student Lookup, Department Dashboard, Retention Funnel, Batch Report.
 * Anything missing shows a message; the app does not crash on it.
 * Displays are aggregated by default. One student's details appear only after they are chosen,
   and the flagged-student list sits in a closed expander.
-* Department, funnel and profile tables belong to tickets 203, 207 and 210. Each gets a status card
-  (what it is, owner ticket, expected file and columns, current status); the table itself is shown
-  only if its CSV exists and passes the checks in sar.service.data.
+* Department, funnel and profile tables (tickets 203, 207 and 210) are aggregated tables built by
+  scripts/build_team_tables.py. Each is shown with a simple chart when its CSV exists and passes the
+  checks in sar.service.data; otherwise a status card says what it is and how to build it.
 """
 
 import sys
@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import matplotlib.pyplot as plt  # noqa: E402
+import pandas as pd  # noqa: E402
 import plotly.graph_objects as go  # noqa: E402
 import streamlit as st  # noqa: E402
 
@@ -52,7 +53,9 @@ from sar.service.views import (  # noqa: E402
     risk_band_table,
     score_presentation,
 )
-from sar.viz.plots import AT_RISK, ON_TRACK  # noqa: E402
+from sar.tables.department import ALL_MODULES, BAND_SHARES  # noqa: E402
+from sar.tables.profiles import PROFILE_FEATURES  # noqa: E402
+from sar.viz.plots import AT_RISK, NEUTRAL, ON_TRACK  # noqa: E402
 
 MODEL_NOTE = ("Model: Random Forest on {n} Day 30 inputs, without background characteristics, with isotonic "
               "calibration. Validated on {val}. Students are ranked by calibrated risk; details in docs/final_model.md.")
@@ -61,6 +64,21 @@ BAND_HELP = ("Risk bands come from the calibrated risk score: Low below the wide
 TRAINING_NOTE = ("This is a training presentation: the model learned from these students' outcomes, so their scores "
                  f"look better than they would on new students. Use {TEST_PRESENTATION} to see the model on new students.")
 CAPACITY, WIDE_NET = "Capacity ranking", "Wide net (fixed cutoff)"
+BAND_COLOURS = {"Low": ON_TRACK, "Medium": NEUTRAL, "High": AT_RISK}
+DEPT_NOTE = ("One row per module in the chosen presentation: students in the Day 30 population, the observed "
+             "at-risk rate (final outcome Fail or Withdrawn) and the share of students in each risk band of the "
+             "final model. Groups under {n} students are shown without figures.")
+DEPT_TRAINING_NOTE = ("Training presentation: the model learned from these students' outcomes, so the band shares "
+                      f"are better separated than they would be for a new intake. {TEST_PRESENTATION} is the "
+                      "validation presentation.")
+FUNNEL_NOTE = ("Retrospective, descriptive view. Stages up to Day 30 use data available on Day 30; the last two "
+               "stages use final outcomes, which are not model inputs. Each stage counts the students of the previous "
+               "stage who also meet its condition. In modules with no assessment due by Day 30, the submission stage "
+               f"counts only early submissions. Counts under {MIN_CELL} are hidden, together with enough other "
+               "modules that the total cannot reveal them.")
+PROFILE_NOTE = ("Profiles from KMeans on five Day 30 engagement and submission features, without background "
+                "characteristics. Clusters were fitted on the training presentations; {val} students are assigned "
+                "to the nearest one. The at-risk rate comes from final outcomes and is not a clustering input.")
 
 
 @st.cache_data(show_spinner="Loading the Day 30 feature matrix...")
@@ -129,9 +147,8 @@ STATUS_LABELS = {"missing": "Not available yet", "unreadable": "File could not b
                  "loaded": "Loaded"}
 
 
-def status_card(name: str, processed_dir: str) -> None:
-    """One card per team table: what it is, who owns it, what file is expected, and its status."""
-    status = get_table(name, processed_dir)
+def status_card(status: TableStatus) -> None:
+    """Card for a team table that cannot be shown: what it is, who owns it, what file is expected, and why."""
     spec = status.spec
     with st.container(border=True):
         st.markdown(f"#### {spec.title}")
@@ -142,14 +159,26 @@ def status_card(name: str, processed_dir: str) -> None:
             f"- **Required columns:** {', '.join(f'`{c}`' for c in spec.columns)}\n"
             f"- **Status:** {STATUS_LABELS[status.state]}"
         )
-        if status.state == "loaded":
-            st.success(status.message)
-            st.dataframe(status.table, hide_index=True)
-        elif status.state == "missing":
+        if status.state == "missing":
             st.info(status.message)
         else:
             st.warning(status.message)
         st.caption("File format and display rules: docs/app.md")
+
+
+def team_table(name: str, processed_dir: str) -> pd.DataFrame | None:
+    """The team table when it can be shown (after its title and source line); otherwise its status card."""
+    status = get_table(name, processed_dir)
+    if not status.ok:
+        status_card(status)
+        return None
+    st.markdown(f"#### {status.spec.title}")
+    st.caption(f"{status.message} Built by scripts/build_team_tables.py ({status.spec.ticket}).")
+    return status.table
+
+
+def shown_rows(table: pd.DataFrame) -> pd.DataFrame:
+    return table[~table["suppressed"].astype(bool)]
 
 
 st.set_page_config(page_title="SAR-AI early warning", layout="wide")
@@ -229,12 +258,77 @@ with lookup:
 with dashboard:
     st.subheader("Department Dashboard")
     st.caption("Model-based counts by module are in the Batch Report tab.")
-    status_card("department_risk", processed)
-    status_card("student_profiles", processed)
+    dept = team_table("department_risk", processed)
+    if dept is not None:
+        st.caption(DEPT_NOTE.format(n=MIN_CELL))
+        options = sorted(dept["code_presentation"].unique())
+        pres = st.selectbox("Presentation", options, key="dept_presentation",
+                            index=options.index(TEST_PRESENTATION) if TEST_PRESENTATION in options else 0)
+        part = dept[dept["code_presentation"] == pres]
+        if (part["score_source"] == "training").any():
+            st.info(DEPT_TRAINING_NOTE)
+        bands = {s: s.removeprefix("share_").capitalize() for s in BAND_SHARES}
+        view = part.drop(columns=["code_presentation", "score_source"]).rename(
+            columns={"code_module": "Module", "students": "Students", "at_risk_rate": "At-risk rate",
+                     "suppressed": "Hidden (small group)", **{s: f"{b} band" for s, b in bands.items()}})
+        st.dataframe(view.style.format({c: "{:.0%}" for c in view.columns if c.endswith(("rate", "band"))},
+                                       na_rep="hidden"), hide_index=True)
+        modules = shown_rows(part[part["code_module"] != ALL_MODULES])
+        fig = go.Figure([go.Bar(name=b, x=modules["code_module"], y=modules[s], marker_color=BAND_COLOURS[b])
+                         for s, b in bands.items()])
+        fig.update_layout(barmode="stack", yaxis_title="Share of students", yaxis_tickformat=".0%", height=320,
+                          margin={"t": 30}, legend={"orientation": "h"}, xaxis_title="Module")
+        st.plotly_chart(fig, width="stretch")
+
+    prof = team_table("student_profiles", processed)
+    if prof is not None:
+        scopes = {"validation": f"{TEST_PRESENTATION} students (validation)",
+                  "training": "Training presentations (used to fit the clusters)"}
+        scope = st.radio("Students", [s for s in scopes if s in set(prof["scope"])], format_func=scopes.get,
+                         horizontal=True, key="profile_scope")
+        st.caption(PROFILE_NOTE.format(val=TEST_PRESENTATION))
+        part = prof[prof["scope"] == scope]
+        means = {f"mean_{f}": f"Mean {f.replace('_', ' ')}" for f in PROFILE_FEATURES}
+        view = part[["profile", "students", "share_of_scope", "at_risk_rate", *means]].rename(
+            columns={"profile": "Profile", "students": "Students", "share_of_scope": "Share",
+                     "at_risk_rate": "At-risk rate", **means})
+        st.dataframe(view.style.format({"Share": "{:.0%}", "At-risk rate": "{:.0%}",
+                                        **{m: "{:,.1f}" for m in means.values()}}, na_rep="hidden"),
+                     hide_index=True)
+        shown = shown_rows(part)
+        for _, row in shown.iterrows():
+            st.markdown(f"**{row['profile']}**: {row['description']}")
+        fig = go.Figure(go.Bar(x=shown["profile"], y=shown["at_risk_rate"], marker_color=AT_RISK,
+                               text=[f"{r:.0%}" for r in shown["at_risk_rate"]], textposition="outside"))
+        fig.update_layout(yaxis_title="Observed at-risk rate", yaxis_tickformat=".0%", yaxis_range=[0, 1],
+                          height=320, margin={"t": 30})
+        st.plotly_chart(fig, width="stretch")
 
 with funnel:
     st.subheader("Retention Funnel")
-    status_card("retention_funnel", processed)
+    st.info(FUNNEL_NOTE)
+    fun = team_table("retention_funnel", processed)
+    if fun is not None:
+        c1, c2 = st.columns(2)
+        options = sorted(fun["code_presentation"].unique())
+        pres = c1.selectbox("Presentation", options, key="funnel_presentation",
+                            index=options.index(TEST_PRESENTATION) if TEST_PRESENTATION in options else 0)
+        in_pres = fun[fun["code_presentation"] == pres]
+        module = c2.selectbox("Module", [ALL_MODULES, *sorted(set(in_pres["code_module"]) - {ALL_MODULES})],
+                              key="funnel_module")
+        part = in_pres[in_pres["code_module"] == module].sort_values("stage_order")
+        shown = shown_rows(part)
+        fig = go.Figure(go.Funnel(y=shown["stage"], x=shown["students"].astype(float), marker_color=ON_TRACK,
+                                  textinfo="value+percent initial"))
+        fig.update_layout(height=360, margin={"t": 30})
+        st.plotly_chart(fig, width="stretch")
+        if len(shown) < len(part):
+            st.caption(f"{len(part) - len(shown)} stages are hidden because of small counts.")
+        view = part[["stage", "students", "share_of_registered", "share_of_previous"]].rename(
+            columns={"stage": "Stage", "students": "Students", "share_of_registered": "Share of registered",
+                     "share_of_previous": "Share of previous stage"})
+        st.dataframe(view.style.format({"Share of registered": "{:.0%}", "Share of previous stage": "{:.0%}"},
+                                       na_rep="hidden"), hide_index=True)
 
 with batch:
     st.subheader("Batch Report")

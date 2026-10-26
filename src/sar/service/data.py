@@ -8,10 +8,10 @@ loader together with config.json and metrics.json. Batch SHAP values precomputed
 scripts/precompute_shap.py are stored next to it (models/final/shap/, git-ignored, student-level)
 and are only used when they were computed for the same model file.
 
-Optional team tables (department risk, retention funnel, student profiles) belong to other
-tickets. The app only reads them if their CSV exists in data/processed, has the expected columns,
-and holds no student-level column; otherwise it says "not available yet". It never builds them.
-`table_status` reports which of these cases applies, for the status cards in the app.
+Team tables (department risk, retention funnel, student profiles; tickets 203, 207 and 210) are
+built by scripts/build_team_tables.py (sar.tables) into data/processed. The app only reads them:
+a table is shown if its CSV exists, has the columns listed in sar.tables, and holds no
+student-level column; otherwise its status card says why. `table_status` reports which case applies.
 """
 
 import json
@@ -24,11 +24,13 @@ import pandas as pd
 
 from sar.config import MODELS_DIR, PROCESSED_DIR
 from sar.models.final import load_final
+from sar.tables import department, funnel, profiles
 
 FINAL_SUBDIR = "final"
 SHAP_SUBDIR = "shap"
 SHAP_PREFIX = "shap_"
 TRAIN_HINT = "Run: python scripts/train_final.py"
+TABLES_HINT = "Build it with: python scripts/build_team_tables.py"
 
 STUDENT_LEVEL_COLUMNS = {"id_student"}
 
@@ -53,12 +55,15 @@ class TableSpec:
 
 
 OPTIONAL_TABLES = {
-    "department_risk": TableSpec("Department risk", "department_risk.csv", "ticket 203 (SCRUM-178)", ("code_module",),
-                                 "Aggregated risk figures per department (module) for the department dashboard."),
+    "department_risk": TableSpec("Department risk", "department_risk.csv", "ticket 203 (SCRUM-178)",
+                                 department.COLUMNS, "Students, observed at-risk rate and risk band shares per "
+                                 "module and presentation."),
     "retention_funnel": TableSpec("Retention funnel", "retention_funnel.csv", "ticket 207 (SCRUM-177)",
-                                  ("stage", "students"), "Number of students at each retention funnel stage."),
-    "student_profiles": TableSpec("Student profiles", "student_profiles.csv", "ticket 210 (SCRUM-183)", ("profile",),
-                                  "Engagement profiles with aggregated figures per profile."),
+                                  funnel.COLUMNS, "Students at each of six retention stages per module and "
+                                  "presentation."),
+    "student_profiles": TableSpec("Student profiles", "student_profiles.csv", "ticket 210 (SCRUM-183)",
+                                  profiles.COLUMNS, "Day 30 engagement profiles with their size, mean values and "
+                                  "observed at-risk rate."),
 }
 
 
@@ -164,7 +169,7 @@ def table_status(spec: TableSpec, processed_dir: Path) -> TableStatus:
     """Which state an optional team table is in. Never raises."""
     path = Path(processed_dir) / spec.file
     if not path.exists():
-        return TableStatus(spec, path, "missing", f"{spec.title} is not available yet: {spec.ticket}.")
+        return TableStatus(spec, path, "missing", f"{spec.title} is not available yet: {spec.ticket}. {TABLES_HINT}.")
     updated = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
     try:
         df = pd.read_csv(path)

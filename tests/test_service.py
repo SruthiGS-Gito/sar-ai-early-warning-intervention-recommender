@@ -64,14 +64,17 @@ def test_table_status_states(tmp_path):
     spec = data.OPTIONAL_TABLES["retention_funnel"]
     st = data.table_status(spec, tmp_path)
     assert st.state == "missing" and st.updated is None and st.path == tmp_path / spec.file
+    assert "python scripts/build_team_tables.py" in st.message
     (tmp_path / spec.file).write_bytes(b"\x00\xff")
     assert data.table_status(spec, tmp_path).state in {"unreadable", "missing_columns"}
     pd.DataFrame({"stage": ["a"]}).to_csv(tmp_path / spec.file, index=False)
     st = data.table_status(spec, tmp_path)
-    assert st.state == "missing_columns" and st.missing_columns == ("students",) and st.updated
-    pd.DataFrame({"stage": ["a"], "students": [3], "id_student": [9]}).to_csv(tmp_path / spec.file, index=False)
+    assert st.state == "missing_columns" and st.missing_columns == tuple(c for c in spec.columns if c != "stage")
+    assert st.updated and "build_team_tables.py" not in st.message
+    valid = pd.DataFrame({c: [1, 2, 3] for c in spec.columns})
+    valid.assign(id_student=9).to_csv(tmp_path / spec.file, index=False)
     assert data.table_status(spec, tmp_path).state == "refused"
-    pd.DataFrame({"stage": ["a", "b", "c"], "students": [3, 2, 1]}).to_csv(tmp_path / spec.file, index=False)
+    valid.to_csv(tmp_path / spec.file, index=False)
     st = data.table_status(spec, tmp_path)
     assert st.ok and len(st.table) == 3 and "3 rows, last updated" in st.message
     assert all(s.description for s in data.OPTIONAL_TABLES.values())

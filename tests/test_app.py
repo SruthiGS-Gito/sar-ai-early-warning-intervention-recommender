@@ -43,6 +43,7 @@ def test_app_runs_with_nothing_available(empty_env):
     assert "run_baseline.py" in text and "train_final.py" in text
     for ticket in ["ticket 203", "ticket 207", "ticket 210"]:
         assert f"not available yet: {ticket}" in text
+    assert text.count("Build it with: python scripts/build_team_tables.py") == 3
     assert [t.label for t in at.tabs] == ["Student Lookup", "Department Dashboard", "Retention Funnel", "Batch Report"]
 
 
@@ -117,18 +118,57 @@ def test_training_presentation_is_labelled(synthetic_env):
     assert "training presentation" in _texts(at)
 
 
-def test_valid_team_table_is_shown_and_student_rows_are_refused(synthetic_env):
+@pytest.fixture
+def tables_env(synthetic_env, matrix, small_final):
+    """Synthetic environment with the three team tables built by sar.tables."""
+    from conftest import synthetic_registrations
+
+    from sar.data.split import make_split
+    from sar.tables import department, funnel, profiles
+
     processed = synthetic_env / "data" / "processed"
-    pd.DataFrame({"stage": ["Registered", "Passed"], "students": [100, 40]}).to_csv(
+    department.department_risk(small_final[0], matrix).to_csv(processed / "department_risk.csv", index=False)
+    funnel.retention_funnel(*synthetic_registrations(matrix), matrix).to_csv(
         processed / "retention_funnel.csv", index=False)
+    train, val = make_split(matrix)
+    table = profiles.student_profiles(profiles.fit_profiles(train), train, val)
+    table.to_csv(processed / "student_profiles.csv", index=False)
+    return synthetic_env, table
+
+
+def test_team_tables_are_shown_with_charts(tables_env):
+    _, prof = tables_env
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception
+    text = _texts(at)
+    assert "not available yet" not in text and "**Status:**" not in text
+    for title in ["Department risk", "Retention funnel", "Student profiles"]:
+        assert f"#### {title}" in text and f"{title}: " in text
+    assert "Retrospective, descriptive view" in text and "not model inputs" in text
+    validation = prof[prof["scope"] == "validation"]
+    for _, row in validation.iterrows():
+        assert f"**{row['profile']}**: {row['description']}" in text
+    assert len(at.dataframe) >= 3
+    assert all(c in text for c in ["Groups under 20 students", "without background characteristics"])
+
+
+def test_team_table_selectors_and_training_note(tables_env):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    at.selectbox(key="dept_presentation").set_value("2013J").run()
+    assert not at.exception and "Training presentation: the model learned" in _texts(at)
+    at.selectbox(key="funnel_module").set_value("AAA").run()
+    at.radio(key="profile_scope").set_value("training").run()
+    assert not at.exception
+
+
+def test_student_level_team_table_is_refused(synthetic_env):
+    processed = synthetic_env / "data" / "processed"
     pd.DataFrame({"code_module": ["AAA"], "id_student": [1]}).to_csv(processed / "department_risk.csv", index=False)
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
     text = _texts(at)
-    assert "Retention funnel is not available yet" not in text
     assert "student-level rows" in text and "**Status:** Refused: contains student-level rows" in text
-    assert "**Status:** Loaded" in text and "Retention funnel: 2 rows, last updated" in text
-    assert any(len(df.value) == 2 for df in at.dataframe)
+    assert "Retention funnel is not available yet" in text
 
 
 def test_missing_columns_are_named_on_the_card(synthetic_env):
@@ -137,4 +177,5 @@ def test_missing_columns_are_named_on_the_card(synthetic_env):
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
     text = _texts(at)
-    assert "**Status:** Missing required columns" in text and "missing expected columns: students" in text
+    assert "**Status:** Missing required columns" in text
+    assert "missing expected columns: code_module, code_presentation, stage_order, stage_key, students" in text
