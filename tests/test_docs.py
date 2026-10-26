@@ -24,3 +24,40 @@ def test_final_model_page_is_generated_from_the_committed_json():
 def test_model_docs_do_not_describe_a_provisional_model(name):
     text = (DOCS / name).read_text(encoding="utf-8").lower()
     assert "provisional" not in text and "train_forest" not in text
+
+
+def _team_summary() -> dict:
+    return json.loads((PROJECT_ROOT / "reports" / "team_tables.json").read_text(encoding="utf-8"))
+
+
+def test_team_table_figures_are_generated_from_the_tracked_summary():
+    from sar.tables.summary import current_block, render_block
+
+    text = (DOCS / "app.md").read_text(encoding="utf-8")
+    assert current_block(text) == render_block(_team_summary()), "Re-run: python scripts/build_team_tables.py"
+
+
+def test_team_table_settings_quoted_in_the_docs_match_the_code():
+    from sar.config import RANDOM_SEED
+    from sar.service.views import MIN_CELL
+    from sar.tables.profiles import K_RANGE, PROFILE_FEATURES, SILHOUETTE_SAMPLE
+
+    text = (DOCS / "app.md").read_text(encoding="utf-8")
+    assert f"`MIN_CELL` ({MIN_CELL})" in text and f"from 1 to {MIN_CELL - 1}" in text
+    assert f"{SILHOUETTE_SAMPLE:,} rows, seed {RANDOM_SEED}" in text
+    assert f"k from {min(K_RANGE)} to {max(K_RANGE)}" in text
+    assert all(f"`{f}`" in text for f in PROFILE_FEATURES)
+    profiles = _team_summary()["student_profiles"]
+    assert profiles["features"] == list(PROFILE_FEATURES)
+    best = max(profiles["selection"], key=lambda r: r["silhouette"])
+    assert profiles["k"] == best["k"] and profiles["k"] in K_RANGE
+
+
+def test_team_table_summary_holds_aggregates_only():
+    summary = _team_summary()
+    assert "id_student" not in json.dumps(summary)
+    min_cell = summary["min_cell"]
+    groups = summary["department_risk"]["validation"] + summary["student_profiles"]["profiles"]
+    assert all(r["students"] is None or r["students"] >= min_cell for r in groups)
+    counts = [r["students"] for r in summary["retention_funnel"]["all_modules"]]
+    assert all(n is None or n == 0 or n >= min_cell for n in counts)

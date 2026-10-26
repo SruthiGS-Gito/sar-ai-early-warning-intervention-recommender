@@ -8,7 +8,7 @@ Review 1 (Sprint 1, 5 to 9 Oct 2026): data foundation, Day 30 cutoff, leakage co
 
 ## Dataset
 
-Open University Learning Analytics Dataset (OULAD). Reference: Kuzilek, Hlosta and Zdrahal (2017), Scientific Data 4:170171. The data is not stored in this repository. Download it from the Open University analytics site and place the seven CSV files in `data/raw/`:
+Open University Learning Analytics Dataset (OULAD). Reference: Kuzilek, Hlosta and Zdrahal (2017), Scientific Data 4:170171. The dataset is published under the Creative Commons Attribution 4.0 licence (CC BY 4.0). The data is not stored in this repository; only aggregated figures derived from it are. Download it from the Open University analytics site and place the seven CSV files in `data/raw/`:
 
 - assessments.csv
 - courses.csv
