@@ -47,6 +47,7 @@ Display rules:
 - Aggregated by default. No student is shown until one is chosen, and the flagged list stays closed.
 - A student's risk is shown as a band and a rank, not as a number.
 - Students from training presentations are labelled, because their scores are optimistic.
+- The model-based band views (Department risk and Batch Report) open on the validation presentation (2014J). A training presentation is offered only after the user turns on "Show a training presentation (in-sample scores)", with the in-sample note beside that option, and every table shown or exported for it has a score-source column marking its scores as in-sample.
 - Protected attributes are not model inputs and never appear in explanations or suggestions.
 
 ## Team tables

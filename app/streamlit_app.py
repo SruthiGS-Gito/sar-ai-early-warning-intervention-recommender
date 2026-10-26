@@ -7,6 +7,9 @@ Tabs: Student Lookup, Department Dashboard, Retention Funnel, Batch Report.
   (Low, Medium, High) and a rank. Students are flagged by capacity ranking or by the wide-net cutoff.
 * Data, model, explainer, precomputed explanations and the similar-student pool load once (cached).
 * Anything missing shows a message; the app does not crash on it.
+* Model-based band views (Department risk, Batch Report) show the validation presentation by
+  default. A training presentation, whose scores are in-sample, appears only after the user opts in,
+  with the in-sample note beside the choice and a score-source column in every exportable table.
 * Displays are aggregated by default. One student's details appear only after they are chosen,
   and the flagged-student list sits in a closed expander.
 * Department, funnel and profile tables (tickets 203, 207 and 210) are aggregated tables built by
@@ -71,6 +74,9 @@ DEPT_NOTE = ("One row per module in the chosen presentation: students in the Day
 DEPT_TRAINING_NOTE = ("Training presentation: the model learned from these students' outcomes, so the band shares "
                       f"are better separated than they would be for a new intake. {TEST_PRESENTATION} is the "
                       "validation presentation.")
+IN_SAMPLE_NOTE = ("Training presentations have in-sample scores: the model learned from these students' outcomes, so "
+                  "their scores and band shares look better than they would for a new intake.")
+SCORE_SOURCE = {"validation": f"validation ({TEST_PRESENTATION})", "training": "training (in-sample)"}
 FUNNEL_NOTE = ("Retrospective, descriptive view. Stages up to Day 30 use data available on Day 30; the last two "
                "stages use final outcomes, which are not model inputs. Each stage counts the students of the previous "
                "stage who also meet its condition. Where no assessment was due by Day 30, the submission stage is not "
@@ -140,6 +146,26 @@ def presentation_picker(matrix, key: str) -> str:
     options = sorted(matrix["code_presentation"].unique())
     default = options.index(TEST_PRESENTATION) if TEST_PRESENTATION in options else len(options) - 1
     return st.selectbox("Presentation", options, index=default, key=key)
+
+
+def validation_or_training(options, key: str) -> str:
+    """The validation presentation by default. A training presentation is offered only after the user
+    turns on the labelled option, with the in-sample note shown beside it."""
+    if TEST_PRESENTATION not in options:
+        return st.selectbox("Presentation", options, key=key)
+    training = [p for p in options if p != TEST_PRESENTATION]
+    left, right = st.columns([1, 2])
+    opt_in = left.toggle("Show a training presentation (in-sample scores)", key=f"{key}_training",
+                         disabled=not training)
+    right.caption(IN_SAMPLE_NOTE)
+    if not opt_in:
+        st.caption(f"Showing {TEST_PRESENTATION}, the validation presentation.")
+        return TEST_PRESENTATION
+    return st.selectbox("Training presentation (in-sample scores)", training, key=key)
+
+
+def score_source(presentation: str) -> str:
+    return SCORE_SOURCE["training" if is_training_presentation(presentation) else "validation"]
 
 
 STATUS_LABELS = {"missing": "Not available yet", "unreadable": "File could not be read",
@@ -261,16 +287,15 @@ with dashboard:
     dept = team_table("department_risk", processed)
     if dept is not None:
         st.caption(DEPT_NOTE.format(n=MIN_CELL))
-        options = sorted(dept["code_presentation"].unique())
-        pres = st.selectbox("Presentation", options, key="dept_presentation",
-                            index=options.index(TEST_PRESENTATION) if TEST_PRESENTATION in options else 0)
+        pres = validation_or_training(sorted(dept["code_presentation"].unique()), "dept_presentation")
         part = dept[dept["code_presentation"] == pres]
         if (part["score_source"] == "training").any():
             st.info(DEPT_TRAINING_NOTE)
         bands = {s: s.removeprefix("share_").capitalize() for s in BAND_SHARES}
-        view = part.drop(columns=["code_presentation", "score_source"]).rename(
-            columns={"code_module": "Module", "students": "Students", "at_risk_rate": "At-risk rate",
-                     "suppressed": "Hidden (small group)", **{s: f"{b} band" for s, b in bands.items()}})
+        view = part.assign(score_source=part["score_source"].map(SCORE_SOURCE)).rename(
+            columns={"code_module": "Module", "code_presentation": "Presentation", "score_source": "Scores",
+                     "students": "Students", "at_risk_rate": "At-risk rate", "suppressed": "Hidden (small group)",
+                     **{s: f"{b} band" for s, b in bands.items()}})
         st.dataframe(view.style.format({c: "{:.0%}" for c in view.columns if c.endswith(("rate", "band"))},
                                        na_rep="hidden"), hide_index=True)
         modules = shown_rows(part[part["code_module"] != ALL_MODULES])
@@ -344,7 +369,7 @@ with batch:
     if not core_ok:
         core_message()
     else:
-        pres = presentation_picker(matrix, "batch_presentation")
+        pres = validation_or_training(sorted(matrix["code_presentation"].unique()), "batch_presentation")
         if is_training_presentation(pres):
             st.info(TRAINING_NOTE)
         scored = get_scores(processed, models, pres, fitted, matrix)
@@ -363,7 +388,7 @@ with batch:
         c3.metric("Flagged share", f"{scored['flagged'].mean():.0%}" if len(scored) else "n/a")
 
         st.markdown("#### By module")
-        st.dataframe(batch_summary(scored).style.format({"Flagged share": "{:.0%}"}))
+        st.dataframe(batch_summary(scored).assign(Scores=score_source(pres)).style.format({"Flagged share": "{:.0%}"}))
 
         st.markdown("#### How calibrated risk spreads across the bands")
         hist = go.Figure()
@@ -379,10 +404,12 @@ with batch:
 
         with st.expander("Flagged students (individual rows; for staff follow-up only)"):
             flagged = scored[scored["flagged"]].sort_values("rank")[KEY + ["band", "rank"]]
+            flagged = flagged.assign(score_source=score_source(pres))
             st.caption("Open a student in Student Lookup to see the reasons and suggested support.")
             st.dataframe(flagged, hide_index=True)
             st.download_button("Download the flagged list (CSV)", flagged.to_csv(index=False),
-                               file_name=f"flagged_{pres}.csv", mime="text/csv")
+                               file_name=f"flagged_{pres}{'_in_sample' if is_training_presentation(pres) else ''}.csv",
+                               mime="text/csv")
 
         st.markdown("### Optional 3D view")
         if st.toggle("Show average risk score by activity and score bands in 3D", key="show_3d"):

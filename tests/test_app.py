@@ -113,6 +113,7 @@ def test_lookup_uses_precomputed_explanations_when_present(synthetic_env, matrix
 
 def test_training_presentation_is_labelled(synthetic_env):
     at = AppTest.from_file(APP, default_timeout=120).run()
+    at.toggle(key="batch_presentation_training").set_value(True).run()
     at.selectbox(key="batch_presentation").set_value("2013J").run()
     assert not at.exception
     assert "training presentation" in _texts(at)
@@ -155,6 +156,7 @@ def test_team_tables_are_shown_with_charts(tables_env):
 
 def test_team_table_selectors_and_training_note(tables_env):
     at = AppTest.from_file(APP, default_timeout=120).run()
+    at.toggle(key="dept_presentation_training").set_value(True).run()
     at.selectbox(key="dept_presentation").set_value("2013J").run()
     assert not at.exception and "Training presentation: the model learned" in _texts(at)
     at.selectbox(key="funnel_module").set_value("AAA").run()
@@ -197,3 +199,30 @@ def test_funnel_shows_a_stage_that_does_not_apply_as_not_applicable(synthetic_en
     funnel_view = [df.value for df in at.dataframe if "Stage" in df.value.columns][0]
     assert "not applicable" in set(funnel_view["Students"])
     assert funnel_view["Stage"].str.endswith("(not applicable)").sum() == 1
+
+
+def test_band_views_default_to_the_validation_presentation(tables_env):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception
+    text = _texts(at)
+    keys = {s.key for s in at.selectbox}
+    assert "dept_presentation" not in keys and "batch_presentation" not in keys
+    assert text.count("Showing 2014J, the validation presentation.") == 2
+    assert text.count("Training presentations have in-sample scores") == 2
+    dept = [df.value for df in at.dataframe if "Scores" in df.value.columns and "Module" in df.value.columns][0]
+    assert set(dept["Presentation"]) == {"2014J"} and set(dept["Scores"]) == {"validation (2014J)"}
+
+
+def test_training_presentations_appear_only_after_opting_in(tables_env):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    at.toggle(key="dept_presentation_training").set_value(True).run()
+    at.toggle(key="batch_presentation_training").set_value(True).run()
+    assert not at.exception
+    for key in ["dept_presentation", "batch_presentation"]:
+        assert set(at.selectbox(key=key).options) == {"2013B", "2013J", "2014B"}
+    at.toggle(key="batch_presentation_training").set_value(True).run()
+    at.selectbox(key="batch_presentation").set_value("2013J").run()
+    exported = [df.value for df in at.dataframe if "score_source" in df.value.columns]
+    assert exported and set(exported[0]["score_source"]) == {"training (in-sample)"}
+    by_module = [df.value for df in at.dataframe if "Flagged share" in df.value.columns][0]
+    assert set(by_module["Scores"]) == {"training (in-sample)"}
