@@ -80,32 +80,32 @@
       {
         "code_module": "EEE",
         "code_presentation": "2013J",
-        "stage": "Submitted an assessment by Day 30"
+        "stage": "Met the Day 30 submission check (submitted, or none was due)"
       },
       {
         "code_module": "EEE",
         "code_presentation": "2014B",
-        "stage": "Submitted an assessment by Day 30"
+        "stage": "Met the Day 30 submission check (submitted, or none was due)"
       },
       {
         "code_module": "EEE",
         "code_presentation": "2014J",
-        "stage": "Submitted an assessment by Day 30"
+        "stage": "Met the Day 30 submission check (submitted, or none was due)"
       },
       {
         "code_module": "GGG",
         "code_presentation": "2013J",
-        "stage": "Submitted an assessment by Day 30"
+        "stage": "Met the Day 30 submission check (submitted, or none was due)"
       },
       {
         "code_module": "GGG",
         "code_presentation": "2014B",
-        "stage": "Submitted an assessment by Day 30"
+        "stage": "Met the Day 30 submission check (submitted, or none was due)"
       },
       {
         "code_module": "GGG",
         "code_presentation": "2014J",
-        "stage": "Submitted an assessment by Day 30"
+        "stage": "Met the Day 30 submission check (submitted, or none was due)"
       }
     ],
     "all_modules": [
@@ -133,7 +133,7 @@
       {
         "code_presentation": "2013B",
         "stage_order": 4,
-        "stage": "Submitted an assessment by Day 30",
+        "stage": "Met the Day 30 submission check (submitted, or none was due)",
         "students": 3660,
         "share_of_registered": 0.7814
       },
@@ -175,7 +175,7 @@
       {
         "code_presentation": "2013J",
         "stage_order": 4,
-        "stage": "Submitted an assessment by Day 30",
+        "stage": "Met the Day 30 submission check (submitted, or none was due)",
         "students": 6898,
         "share_of_registered": 0.7799
       },
@@ -217,7 +217,7 @@
       {
         "code_presentation": "2014B",
         "stage_order": 4,
-        "stage": "Submitted an assessment by Day 30",
+        "stage": "Met the Day 30 submission check (submitted, or none was due)",
         "students": 5764,
         "share_of_registered": 0.7386
       },
@@ -259,7 +259,7 @@
       {
         "code_presentation": "2014J",
         "stage_order": 4,
-        "stage": "Submitted an assessment by Day 30",
+        "stage": "Met the Day 30 submission check (submitted, or none was due)",
         "students": 8466,
         "share_of_registered": 0.7519
       },

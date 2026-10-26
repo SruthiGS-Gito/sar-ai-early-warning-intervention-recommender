@@ -6,7 +6,7 @@ counts the students of the previous stage who also meet its condition.
   1. registered       every enrolment in studentInfo
   2. still registered not unregistered on or before Day 30 (the Day 30 model population)
   3. active in VLE    at least one day of VLE activity by Day 30
-  4. submitted        at least one non-exam assessment submitted by Day 30
+  4. submission check at least one non-exam assessment submitted by Day 30, or none was due
   5. not withdrawn    final outcome is not Withdrawn
   6. passed           final outcome is Pass or Distinction
 
@@ -31,7 +31,7 @@ STAGES = (
     ("registered", "Registered"),
     ("still_registered", f"Still registered after Day {CUTOFF_DAY}"),
     ("active_vle", f"Active in the VLE by Day {CUTOFF_DAY}"),
-    ("submitted", f"Submitted an assessment by Day {CUTOFF_DAY}"),
+    ("submitted", f"Met the Day {CUTOFF_DAY} submission check (submitted, or none was due)"),
     ("not_withdrawn", "Did not withdraw"),
     ("passed", "Passed"),
 )

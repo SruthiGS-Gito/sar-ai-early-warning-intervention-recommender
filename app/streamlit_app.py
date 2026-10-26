@@ -47,16 +47,18 @@ from sar.service.figures import band_figure, hidden_bands  # noqa: E402
 from sar.service.views import (  # noqa: E402
     KEY,
     MIN_CELL,
+    band_evidence,
     batch_summary,
-    capacity_shares,
     flag_capacity,
+    flag_outcome,
     flag_wide_net,
+    flagged_by_band,
     is_training_presentation,
     risk_band_edges,
     risk_band_table,
     score_presentation,
 )
-from sar.tables.department import ALL_MODULES, BAND_SHARES  # noqa: E402
+from sar.tables.department import ALL_MODULES, BAND_RATES, BAND_SHARES  # noqa: E402
 from sar.tables.profiles import PROFILE_FEATURES  # noqa: E402
 from sar.viz.plots import AT_RISK, NEUTRAL, ON_TRACK  # noqa: E402
 
@@ -68,6 +70,11 @@ TRAINING_NOTE = ("This is a training presentation: the model learned from these 
                  f"look better than they would on new students. Use {TEST_PRESENTATION} to see the model on new students.")
 CAPACITY, WIDE_NET = "Capacity ranking", "Wide net (fixed cutoff)"
 BAND_COLOURS = {"Low": ON_TRACK, "Medium": NEUTRAL, "High": AT_RISK}
+FLAG_VS_BAND = ("High is a fixed calibrated-score cutoff set when the model was built; capacity flags the "
+                "highest-risk share of this cohort, which can include Medium students when the share exceeds the "
+                "High band's share.")
+EVIDENCE_NOTE = ("Observed at-risk rate inside each band, and its lift: the band's rate divided by the cohort's "
+                 "overall at-risk rate. Bands with fewer than {n} students are shown as n < {n}.")
 DEPT_NOTE = ("One row per module in the chosen presentation: students in the Day 30 population, the observed "
              "at-risk rate (final outcome Fail or Withdrawn) and the share of students in each risk band of the "
              "final model. Groups under {n} students are shown without figures.")
@@ -192,13 +199,14 @@ def status_card(status: TableStatus) -> None:
         st.caption("File format and display rules: docs/app.md")
 
 
-def team_table(name: str, processed_dir: str) -> pd.DataFrame | None:
+def team_table(name: str, processed_dir: str, heading: bool = True) -> pd.DataFrame | None:
     """The team table when it can be shown (after its title and source line); otherwise its status card."""
     status = get_table(name, processed_dir)
     if not status.ok:
         status_card(status)
         return None
-    st.markdown(f"#### {status.spec.title}")
+    if heading:
+        st.markdown(f"#### {status.spec.title}")
     st.caption(f"{status.message} Built by scripts/build_team_tables.py ({status.spec.ticket}).")
     return status.table
 
@@ -298,6 +306,18 @@ with dashboard:
                      **{s: f"{b} band" for s, b in bands.items()}})
         st.dataframe(view.style.format({c: "{:.0%}" for c in view.columns if c.endswith(("rate", "band"))},
                                        na_rep="hidden"), hide_index=True)
+        st.markdown("##### Observed at-risk rate inside each band")
+        st.caption(EVIDENCE_NOTE.format(n=MIN_CELL))
+        base = part.loc[part["code_module"] == ALL_MODULES, "at_risk_rate"]
+        base = float(base.iloc[0]) if len(base) else float("nan")
+        evidence = part[["code_module"]].rename(columns={"code_module": "Module"})
+        for r, b in zip(BAND_RATES, BAND_SHARES):
+            name = bands[b]
+            evidence[f"{name}: at-risk rate"] = part[r].to_numpy()
+            evidence[f"{name}: lift"] = (part[r] / base).to_numpy()
+        st.dataframe(evidence.style.format(
+            {c: ("{:.0%}" if c.endswith("rate") else "{:.2f}") for c in evidence.columns if ": " in c},
+            na_rep=f"n < {MIN_CELL}"), hide_index=True)
         modules = shown_rows(part[part["code_module"] != ALL_MODULES])
         fig = go.Figure([go.Bar(name=b, x=modules["code_module"], y=modules[s], marker_color=BAND_COLOURS[b])
                          for s, b in bands.items()])
@@ -332,7 +352,7 @@ with dashboard:
 with funnel:
     st.subheader("Retention Funnel")
     st.info(FUNNEL_NOTE)
-    fun = team_table("retention_funnel", processed)
+    fun = team_table("retention_funnel", processed, heading=False)
     if fun is not None:
         c1, c2 = st.columns(2)
         options = sorted(fun["code_presentation"].unique())
@@ -346,14 +366,19 @@ with funnel:
                                                      part["stage"] + " (not applicable)"))
         shown = shown_rows(part)
         fig = go.Figure(go.Funnel(y=shown["stage"], x=shown["students"].astype(float), marker_color=ON_TRACK,
-                                  textinfo="value+percent initial"))
+                                  texttemplate="%{value:,.0f} (%{percentInitial:.0%})"))
         fig.update_layout(height=360, margin={"t": 30})
         st.plotly_chart(fig, width="stretch")
         if len(shown) < len(part):
             st.caption(f"{len(part) - len(shown)} stages are hidden because of small counts.")
-        if not part["applicable"].astype(bool).all():
-            st.caption(f"No assessment was due by Day 30 in {module} {pres}, so the submission stage is not "
-                       "applicable; the later stages start from the previous stage's count.")
+        carried = in_pres[~in_pres["applicable"].astype(bool)]
+        if module != ALL_MODULES:
+            carried = carried[carried["code_module"] == module]
+        if len(carried):
+            n = carried["students"].dropna().astype(int).sum()
+            st.caption(f"{n:,} students in {', '.join(sorted(carried['code_module']))} are carried forward on the "
+                       "submission check: no assessment was due by Day 30 there, so the submission stage is not "
+                       "applicable and the later stages start from the previous stage's count.")
         view = part[["stage", "students", "share_of_registered", "share_of_previous"]].rename(
             columns={"stage": "Stage", "students": "Students", "share_of_registered": "Share of registered",
                      "share_of_previous": "Share of previous stage"})
@@ -362,7 +387,7 @@ with funnel:
             for n, a in zip(part["students"], part["applicable"].astype(bool))]
         view.loc[~part["applicable"].astype(bool).to_numpy(), "Share of previous stage"] = float("nan")
         st.dataframe(view.style.format({"Share of registered": "{:.0%}", "Share of previous stage": "{:.0%}"},
-                                       na_rep="n/a"), hide_index=True)
+                                       na_rep="\u2013"), hide_index=True)
 
 with batch:
     st.subheader("Batch Report")
@@ -372,23 +397,62 @@ with batch:
         pres = validation_or_training(sorted(matrix["code_presentation"].unique()), "batch_presentation")
         if is_training_presentation(pres):
             st.info(TRAINING_NOTE)
+        in_sample = is_training_presentation(pres)
         scored = get_scores(processed, models, pres, fitted, matrix)
         rule = st.radio("Flagging rule", [CAPACITY, WIDE_NET], horizontal=True, key="flag_rule")
         if rule == CAPACITY:
-            share = st.select_slider("Contact capacity (share of this cohort)", options=capacity_shares(metrics),
-                                     value=0.2, format_func=lambda s: f"{s:.0%}", key="capacity")
-            flagging = flag_capacity(scored, share, metrics)
+            pct = st.slider("Contact capacity (share of this cohort)", min_value=1, max_value=50, value=20, step=1,
+                            format="%d%%", key="capacity")
+            flagging = flag_capacity(scored, pct / 100)
         else:
-            flagging = flag_wide_net(scored, cutoffs, metrics)
+            flagging = flag_wide_net(scored, cutoffs)
         scored = scored.assign(flagged=flagging.flagged)
-        st.caption(flagging.describe())
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Students", f"{len(scored):,}")
-        c2.metric("Flagged", f"{int(scored['flagged'].sum()):,}")
-        c3.metric("Flagged share", f"{scored['flagged'].mean():.0%}" if len(scored) else "n/a")
+        outcome = flag_outcome(scored, scored["flagged"])
+        tag = " (in-sample)" if in_sample else ""
+        st.caption(f"{flagging.label}. Caught, missed, precision and recall compare the flags with this cohort's "
+                   "observed outcomes (Fail or Withdrawn)" + ("; in-sample for a training presentation." if in_sample
+                                                             else "."))
+        cards = st.columns(6)
+        cards[0].metric("Students", f"{outcome.students:,}")
+        cards[1].metric("Flagged", f"{outcome.flagged:,}",
+                        help=f"{outcome.flagged / outcome.students:.0%} of the cohort" if outcome.students else None)
+        cards[2].metric("At-risk caught" + tag, f"{outcome.caught:,}")
+        cards[3].metric("At-risk missed" + tag, f"{outcome.missed:,}")
+        cards[4].metric("Precision" + tag, "\u2013" if outcome.flagged == 0 else f"{outcome.precision:.0%}")
+        cards[5].metric("Recall" + tag, "\u2013" if outcome.at_risk == 0 else f"{outcome.recall:.0%}")
+        by_band = flagged_by_band(scored)
+        st.caption("Flagged students by risk band: " + ", ".join(f"{b} {n:,}" for b, n in by_band.items()) + ". "
+                   + FLAG_VS_BAND)
 
         st.markdown("#### By module")
-        st.dataframe(batch_summary(scored).assign(Scores=score_source(pres)).style.format({"Flagged share": "{:.0%}"}))
+        summary = batch_summary(scored, outcomes=not in_sample).assign(Scores=score_source(pres))
+        st.dataframe(summary.style.format({"Students": "{:,}", "Flagged": "{:,}", "Flagged share": "{:.0%}",
+                                           **{b: "{:,}" for b in by_band.index},
+                                           **{c: "{:.0%}" for c in ["At-risk rate", "Recall", "Precision"]
+                                              if c in summary.columns}}, na_rep="\u2013"))
+        if in_sample:
+            st.caption(f"Per-module at-risk rate, recall and precision are shown for {TEST_PRESENTATION} only.")
+        else:
+            st.caption("Recall is the share of the module's at-risk students who are flagged; precision is the share "
+                       "of the module's flagged students who are at risk.")
+
+        st.markdown("#### Observed at-risk rate inside each risk band")
+        if in_sample:
+            st.caption(f"Shown for the validation presentation ({TEST_PRESENTATION}) only; training scores are "
+                       "in-sample.")
+        else:
+            st.caption(EVIDENCE_NOTE.format(n=MIN_CELL))
+            ev = band_evidence(scored)
+            table = ev.pivot(index="code_module", columns="band", values=["students", "at_risk_rate", "lift"])
+            order = ["All modules", *sorted(set(ev["code_module"]) - {"All modules"})]
+            bands_hi = list(by_band.index)
+            table = pd.DataFrame({f"{b}: {lab}": table[(col, b)] for b in bands_hi
+                                  for col, lab in [("students", "students"), ("at_risk_rate", "at-risk rate"),
+                                                   ("lift", "lift")]}).loc[order]
+            table.index.name = "Module"
+            st.dataframe(table.style.format(
+                {c: "{:,.0f}" if c.endswith("students") else "{:.0%}" if c.endswith("rate") else "{:.2f}"
+                 for c in table.columns}, na_rep=f"n < {MIN_CELL}"))
 
         st.markdown("#### How calibrated risk spreads across the bands")
         hist = go.Figure()

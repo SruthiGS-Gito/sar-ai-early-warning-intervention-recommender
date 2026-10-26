@@ -91,6 +91,22 @@ def test_department_hides_groups_below_min_cell(matrix, small_final, min_cell):
         assert small.any()
 
 
+def test_department_band_rates_match_the_scored_students(matrix, small_final):
+    from sar.service.views import score_presentation
+
+    t = department.department_risk(small_final[0], matrix, min_cell=5)
+    row = t[(t["code_presentation"] == "2014J") & (t["code_module"] == department.ALL_MODULES)].iloc[0]
+    scored = score_presentation(small_final[0], matrix, "2014J")
+    for rate, band in zip(department.BAND_RATES, ["Low", "Medium", "High"]):
+        cell = scored.loc[scored["band"] == band, "at_risk"]
+        if len(cell) >= 5:
+            assert row[rate] == pytest.approx(cell.mean())
+        else:
+            assert np.isnan(row[rate])
+    rates = t[list(department.BAND_RATES)].stack()
+    assert rates.between(0, 1).all()
+
+
 # Retention funnel (ticket 207)
 
 def test_funnel_columns_and_stage_order(fun):

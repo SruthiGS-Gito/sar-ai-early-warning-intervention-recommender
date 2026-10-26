@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from conftest import FEATURES, synthetic_matrix
 
-from sar.config import PROTECTED_FEATURES
+from sar.config import PROCESSED_DIR, PROTECTED_FEATURES
 from sar.explain.factors import BACKGROUND
 from sar.models import final
 
@@ -119,3 +119,23 @@ def test_built_final_model_files():
     assert not [(p, v) for p, v in _rates(metrics) if not 0 <= v <= 1]
     scores = [config["cutoffs"][k]["score"] for k in CUTOFFS]
     assert all(a < b for a, b in zip(scores, scores[1:]))
+
+
+@pytest.mark.skipif(not all((final.FINAL_DIR / f).exists() for f in ("model.joblib", "calibrator.joblib"))
+                    or not (PROCESSED_DIR / "day30_feature_matrix.csv").exists(),
+                    reason="run python scripts/run_baseline.py and python scripts/train_final.py first")
+def test_app_capacity_flags_reproduce_the_committed_capacity_table():
+    """The app's ranking (calibrated score, ties broken by raw score) gives the stored validation figures."""
+    import pandas as pd
+
+    from sar.service import views
+
+    fitted, config = final.load_final()
+    metrics = json.loads((final.FINAL_DIR / "metrics.json").read_text())
+    matrix = pd.read_csv(PROCESSED_DIR / "day30_feature_matrix.csv")
+    scored = views.score_presentation(fitted, matrix, config["validation_presentation"][0])
+    for key, stored in metrics["final"]["validation"]["capacity"].items():
+        o = views.flag_outcome(scored, views.flag_capacity(scored, int(key.rstrip("%")) / 100).flagged)
+        assert o.flagged == stored["flagged"]
+        assert o.precision == pytest.approx(stored["precision"], abs=1e-12)
+        assert o.recall == pytest.approx(stored["recall"], abs=1e-12)

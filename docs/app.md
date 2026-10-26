@@ -32,7 +32,7 @@ Wherever a student's risk is shown, the app shows the band, not a score. The cur
 
 ### Flagging rules
 The Batch Report offers two rules.
-- **Capacity ranking (default):** rank the cohort by calibrated risk and flag the top share chosen on the slider (5% to 50%). This matches how a support team with a fixed number of contacts works. The precision and recall shown for each share are the validation figures from the capacity table in `metrics.json`.
+- **Capacity ranking (default):** rank the cohort by calibrated risk and flag the top share chosen on the slider (1% to 50%). This matches how a support team with a fixed number of contacts works. Students are ordered by calibrated score; because isotonic calibration gives many tied scores, ties are broken by the raw forest score and then by row order, which reproduces the capacity table in `metrics.json`. Precision, recall and the numbers of at-risk students caught and missed are computed from the cohort's own outcomes for the chosen share, and are labelled in-sample for a training presentation. Capacity flags can include Medium-band students: High is a fixed cutoff set when the model was built, so a share larger than the High band's share reaches into Medium.
 - **Wide net (fixed cutoff):** flag everyone at or above the `wide_net` cutoff. Because at-risk rates differ between intakes, a cutoff fixed in advance does not flag a stable share of a new cohort; see the limitations in [final_model.md](final_model.md#limitations).
 
 ## Tabs
@@ -41,7 +41,7 @@ The Batch Report offers two rules.
 | Student Lookup | Pick a presentation, module and student to see the risk band, the rank, the SHAP chart, the plain-language sentence, and up to three support types with similar-student context | SCRUM-187, SCRUM-188 |
 | Department Dashboard | Department risk for a chosen presentation (table and stacked band-share chart) and the student profiles (table, descriptions and at-risk rate chart); a pointer to Batch Report for flagged counts | tickets 203 and 210 |
 | Retention Funnel | The six-stage funnel for a chosen presentation and module (chart and table), with a note that it is retrospective | ticket 207 |
-| Batch Report | For a presentation: the flagging rule, students, flagged count and share with the validation precision and recall for that rule, a by-module table with students per risk band, and how calibrated risk spreads across the bands. The flagged list (closed expander, CSV download with band and rank) and an optional 3D view of average risk by activity and score bands (bands under 20 students hidden) are opt-in | final model |
+| Batch Report | For a presentation: the flagging rule; students, flagged, at-risk caught and missed, precision and recall for that rule; flagged students per risk band; a by-module table with students per risk band and, for the validation presentation, each module's at-risk rate, recall and precision; the observed at-risk rate and lift inside each band; and how calibrated risk spreads across the bands. The flagged list (closed expander, CSV download with band and rank) and an optional 3D view of average risk by activity and score bands (bands under 20 students hidden) are opt-in | final model |
 
 Display rules:
 - Aggregated by default. No student is shown until one is chosen, and the flagged list stays closed.
@@ -59,18 +59,18 @@ The code is in `sar.tables`. The script writes the tables to `data/processed/` a
 
 | File | Ticket | One row per | Columns |
 |---|---|---|---|
-| `department_risk.csv` | 203 (SCRUM-178) | module and presentation, plus an "All modules" row per presentation | `code_module`, `code_presentation`, `score_source`, `students`, `at_risk_rate`, `share_low`, `share_medium`, `share_high`, `suppressed` |
+| `department_risk.csv` | 203 (SCRUM-178) | module and presentation, plus an "All modules" row per presentation | `code_module`, `code_presentation`, `score_source`, `students`, `at_risk_rate`, `share_low`, `share_medium`, `share_high`, `rate_low`, `rate_medium`, `rate_high`, `suppressed` |
 | `retention_funnel.csv` | 207 (SCRUM-177) | stage, module and presentation, plus "All modules" rows | `code_module`, `code_presentation`, `stage_order`, `stage_key`, `stage`, `students`, `share_of_registered`, `share_of_previous`, `applicable`, `suppressed` |
 | `student_profiles.csv` | 210 (SCRUM-183) | profile and scope (validation or training) | `scope`, `presentations`, `profile`, `cluster`, `description`, `students`, `share_of_scope`, `at_risk_rate`, `mean_<feature>` for each profile feature, `suppressed` |
 
 ### Definitions
-**Department risk.** A department is one module in one presentation. `students` is the number of students in the Day 30 population (not unregistered by Day 30). `at_risk_rate` is the observed share whose final outcome was Fail or Withdrawn. The band shares are the shares of students in each risk band (Low, Medium, High; `sar.config.RISK_BANDS`) of the final model's calibrated score. For training presentations (`score_source` = training) the scores are in-sample: the model learned from those students' outcomes, so their band shares are better separated than they would be for a new intake.
+**Department risk.** A department is one module in one presentation. `students` is the number of students in the Day 30 population (not unregistered by Day 30). `at_risk_rate` is the observed share whose final outcome was Fail or Withdrawn. The band shares are the shares of students in each risk band (Low, Medium, High; `sar.config.RISK_BANDS`) of the final model's calibrated score. `rate_low`, `rate_medium` and `rate_high` are the observed at-risk rates inside each band; the app divides them by the overall at-risk rate of the presentation to show each band's lift. A band rate is blank when the band holds fewer than 20 students in that group. For training presentations (`score_source` = training) the scores are in-sample: the model learned from those students' outcomes, so their band shares are better separated than they would be for a new intake.
 
 **Retention funnel.** A retrospective, descriptive view. The stages are nested: each counts the students of the previous stage who also meet its condition.
 1. Registered: every enrolment in `studentInfo`.
 2. Still registered after Day 30: not unregistered on or before Day 30.
 3. Active in the VLE by Day 30: at least one day of VLE activity by Day 30.
-4. Submitted an assessment by Day 30: at least one non-exam assessment submitted by Day 30.
+4. Met the Day 30 submission check (submitted, or none was due): at least one non-exam assessment submitted by Day 30, or no assessment was due by Day 30.
 5. Did not withdraw: final outcome is not Withdrawn.
 6. Passed: final outcome is Pass or Distinction.
 
@@ -125,7 +125,7 @@ Students at each stage, with the share of registered students in brackets.
 | Registered | 4,684 (100%) | 8,845 (100%) | 7,804 (100%) | 11,260 (100%) |
 | Still registered after Day 30 | 4,111 (88%) | 7,655 (87%) | 6,497 (83%) | 9,203 (82%) |
 | Active in the VLE by Day 30 | 3,984 (85%) | 7,372 (83%) | 6,272 (80%) | 8,982 (80%) |
-| Submitted an assessment by Day 30 | 3,660 (78%) | 6,898 (78%) | 5,764 (74%) | 8,466 (75%) |
+| Met the Day 30 submission check (submitted, or none was due) | 3,660 (78%) | 6,898 (78%) | 5,764 (74%) | 8,466 (75%) |
 | Did not withdraw | 3,048 (65%) | 5,925 (67%) | 4,711 (60%) | 7,015 (62%) |
 | Passed | 2,077 (44%) | 4,346 (49%) | 3,286 (42%) | 5,351 (48%) |
 

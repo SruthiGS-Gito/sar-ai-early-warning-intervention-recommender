@@ -91,7 +91,7 @@ def test_scoring_gives_calibrated_score_band_and_rank(matrix, small_final):
     fitted, _ = small_final
     scored = views.score_presentation(fitted, matrix, "2014J")
     n = int((matrix["code_presentation"] == "2014J").sum())
-    assert len(scored) == n and list(scored.columns) == views.KEY + ["score", "raw_score", "band", "rank"]
+    assert len(scored) == n and list(scored.columns) == views.KEY + ["score", "raw_score", "band", "rank", "at_risk"]
     raw, cal = final.predict(fitted, matrix[matrix["code_presentation"] == "2014J"])
     np.testing.assert_allclose(scored["score"], cal, atol=1e-12)   # parallel tree sums differ in the last digits
     assert sorted(scored["rank"]) == list(range(1, n + 1))
@@ -114,40 +114,94 @@ def test_band_edges_are_ordered_and_bands_follow_them(small_final):
         views.risk_band_edges(bad)
 
 
+def test_risk_order_breaks_calibrated_ties_by_raw_score_then_row_order():
+    cal = [0.5, 0.9, 0.5, 0.5, 0.9]
+    raw = [0.2, 0.7, 0.4, 0.2, 0.8]
+    assert list(views.risk_order(cal, raw)) == [4, 1, 2, 0, 3]
+
+
 def test_capacity_ranking_flags_the_right_number_of_students(matrix, small_final):
-    fitted, metrics = small_final
+    fitted, _ = small_final
     scored = views.score_presentation(fitted, matrix, "2014J")
-    shares = views.capacity_shares(metrics)
-    assert shares == [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5]
-    for share in shares:
-        f = views.flag_capacity(scored, share, metrics)
+    for share in [0.01, 0.05, 0.13, 0.2, 0.5]:
+        f = views.flag_capacity(scored, share)
         k = int(round(share * len(scored)))
         assert f.flagged.sum() == k
         assert set(scored.loc[f.flagged, "rank"]) == set(range(1, k + 1))       # exactly the top k
-        assert f.validation == metrics["final"]["validation"]["capacity"][f"{round(share * 100)}%"]
-        assert "precision" in f.describe() and "recall" in f.describe()
-    with pytest.raises(ValueError):
-        views.flag_capacity(scored, 0.33, metrics)
+    for bad in [-0.1, 1.5]:
+        with pytest.raises(ValueError):
+            views.flag_capacity(scored, bad)
+
+
+def test_capacity_outcomes_match_the_capacity_table(matrix, small_final):
+    """Computed from the cohort's outcomes, the figures equal those final.evaluate stored for each share."""
+    fitted, metrics = small_final
+    scored = views.score_presentation(fitted, matrix, "2014J")
+    for key, stored in metrics["final"]["validation"]["capacity"].items():
+        o = views.flag_outcome(scored, views.flag_capacity(scored, int(key.rstrip("%")) / 100).flagged)
+        assert o.flagged == stored["flagged"]
+        assert o.precision == pytest.approx(stored["precision"]) and o.recall == pytest.approx(stored["recall"])
+
+
+def test_flag_outcome_counts_caught_and_missed():
+    scored = pd.DataFrame({"at_risk": [1, 1, 0, 1, 0]})
+    o = views.flag_outcome(scored, [True, False, True, True, False])
+    assert (o.students, o.flagged, o.at_risk, o.caught, o.missed) == (5, 3, 3, 2, 1)
+    assert o.precision == pytest.approx(2 / 3) and o.recall == pytest.approx(2 / 3)
+    none = views.flag_outcome(scored, [False] * 5)
+    assert none.caught == 0 and np.isnan(none.precision) and none.recall == 0
 
 
 def test_wide_net_uses_the_config_cutoff(matrix, small_final):
-    fitted, metrics = small_final
+    fitted, _ = small_final
     scored = views.score_presentation(fitted, matrix, "2014J")
-    f = views.flag_wide_net(scored, fitted["cutoffs"], metrics)
+    f = views.flag_wide_net(scored, fitted["cutoffs"])
     assert f.flagged.equals(scored["score"] >= fitted["cutoffs"]["wide_net"]["score"])
-    assert f.validation == metrics["final"]["validation"]["cutoffs"]["wide_net"]
+
+
+def test_flagged_by_band_adds_up_to_the_flagged_count(matrix, small_final):
+    fitted, _ = small_final
+    scored = views.score_presentation(fitted, matrix, "2014J")
+    scored = scored.assign(flagged=views.flag_capacity(scored, 0.3).flagged)
+    counts = views.flagged_by_band(scored)
+    assert list(counts.index) == ["High", "Medium", "Low"] and counts.sum() == scored["flagged"].sum()
+
+
+def test_band_evidence_rates_and_lifts(matrix, small_final):
+    fitted, _ = small_final
+    scored = views.score_presentation(fitted, matrix, "2014J")
+    ev = views.band_evidence(scored, min_cell=5)
+    overall = ev[ev["code_module"] == "All modules"].set_index("band")
+    assert overall["students"].sum() == len(scored)
+    base = scored["at_risk"].mean()
+    for band, row in overall.iterrows():
+        cell = scored.loc[scored["band"] == band, "at_risk"]
+        if len(cell) >= 5:
+            assert row["at_risk_rate"] == pytest.approx(cell.mean()) and row["lift"] == pytest.approx(cell.mean() / base)
+        else:
+            assert np.isnan(row["at_risk_rate"]) and np.isnan(row["lift"])
+    modules = ev[ev["code_module"] != "All modules"]
+    assert modules["students"].sum() == len(scored)
+    hidden = views.band_evidence(scored, min_cell=10_000)
+    assert hidden["at_risk_rate"].isna().all()
 
 
 def test_batch_summary_counts_flags_and_bands(matrix, small_final):
-    fitted, metrics = small_final
+    fitted, _ = small_final
     scored = views.score_presentation(fitted, matrix, "2014J")
-    scored = scored.assign(flagged=views.flag_capacity(scored, 0.2, metrics).flagged)
+    scored = scored.assign(flagged=views.flag_capacity(scored, 0.2).flagged)
     s = views.batch_summary(scored)
     assert s.loc["All modules", "Students"] == len(scored)
     assert s.drop(index="All modules")["Flagged"].sum() == scored["flagged"].sum()
     assert s.loc["All modules", "Flagged share"] == pytest.approx(scored["flagged"].mean())
     assert s.loc["All modules", ["High", "Medium", "Low"]].sum() == len(scored)
-    assert "Average score" not in s.columns
+    assert "Average score" not in s.columns and "Recall" not in s.columns
+    o = views.batch_summary(scored, outcomes=True)
+    for module, g in [*scored.groupby("code_module"), ("All modules", scored)]:
+        y, f = g["at_risk"] == 1, g["flagged"]
+        assert o.loc[module, "At-risk rate"] == pytest.approx(y.mean())
+        assert o.loc[module, "Recall"] == pytest.approx((y & f).sum() / y.sum())
+        assert o.loc[module, "Precision"] == pytest.approx((y & f).sum() / f.sum())
 
 
 def test_shap_cache_roundtrip_and_stale_hash(saved_final, matrix, small_final):

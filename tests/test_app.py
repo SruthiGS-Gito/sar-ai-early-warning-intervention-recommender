@@ -72,9 +72,16 @@ def test_app_with_synthetic_data_and_model(synthetic_env, matrix):
     n_val = int((matrix["code_presentation"] == "2014J").sum())
     assert f"{n_val:,}" in text                                      # batch report student count
     assert at.radio(key="flag_rule").value == "Capacity ranking"     # ranking is the default rule
-    assert at.select_slider(key="capacity").value == 0.2
-    assert f"{round(0.2 * n_val):,}" in [m.value for m in at.metric]  # top 20% flagged
-    assert "precision" in text and "recall" in text and "metrics.json" in text
+    assert at.slider(key="capacity").value == 20
+    cards = {m.label: m.value for m in at.metric}
+    assert cards["Flagged"] == f"{round(0.2 * n_val):,}"               # top 20% flagged
+    assert {"Students", "Flagged", "At-risk caught", "At-risk missed", "Precision", "Recall"} <= set(cards)
+    val = matrix[matrix["code_presentation"] == "2014J"]
+    assert int(cards["At-risk caught"].replace(",", "")) + int(cards["At-risk missed"].replace(",", "")) ==         int(val["at_risk"].sum())
+    assert "Flagged students by risk band: High" in text and "can include Medium students" in text
+    assert "Observed at-risk rate inside each risk band" in text and "lift" in text
+    by_module = [df.value for df in at.dataframe if "Flagged share" in df.value.columns][0]
+    assert {"At-risk rate", "Recall", "Precision"} <= set(by_module.columns)
     assert at.selectbox(key="lookup_student").value is None        # no student shown by default
     assert not at.toggle(key="show_3d").value                       # 3D view is opt-in
 
@@ -143,8 +150,9 @@ def test_team_tables_are_shown_with_charts(tables_env):
     assert not at.exception
     text = _texts(at)
     assert "not available yet" not in text and "**Status:**" not in text
-    for title in ["Department risk", "Retention funnel", "Student profiles"]:
-        assert f"#### {title}" in text and f"{title}: " in text
+    for title in ["Department risk", "Student profiles"]:
+        assert f"#### {title}" in text
+    assert "#### Retention funnel" not in text
     assert "Retrospective, descriptive view" in text and "not model inputs" in text
     assert "Counts under 20 are hidden" in text and "{" not in text
     validation = prof[prof["scope"] == "validation"]
@@ -195,7 +203,11 @@ def test_funnel_shows_a_stage_that_does_not_apply_as_not_applicable(synthetic_en
     at = AppTest.from_file(APP, default_timeout=120).run()
     at.selectbox(key="funnel_module").set_value("GGG").run()
     assert not at.exception
-    assert "submission stage is not applicable" in _texts(at)
+    text = _texts(at)
+    assert "submission stage is not applicable" in text
+    carried = table[(table["code_module"] == "GGG") & (table["code_presentation"] == "2014J")
+                    & ~table["applicable"]]["students"].sum()
+    assert f"{carried:,} students in GGG are carried forward on the submission check" in text
     funnel_view = [df.value for df in at.dataframe if "Stage" in df.value.columns][0]
     assert "not applicable" in set(funnel_view["Students"])
     assert funnel_view["Stage"].str.endswith("(not applicable)").sum() == 1
@@ -226,3 +238,23 @@ def test_training_presentations_appear_only_after_opting_in(tables_env):
     assert exported and set(exported[0]["score_source"]) == {"training (in-sample)"}
     by_module = [df.value for df in at.dataframe if "Flagged share" in df.value.columns][0]
     assert set(by_module["Scores"]) == {"training (in-sample)"}
+
+
+def test_training_presentation_metrics_are_labelled_in_sample(synthetic_env):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    at.toggle(key="batch_presentation_training").set_value(True).run()
+    at.selectbox(key="batch_presentation").set_value("2013J").run()
+    assert not at.exception
+    labels = {m.label for m in at.metric}
+    assert {"At-risk caught (in-sample)", "Precision (in-sample)", "Recall (in-sample)"} <= labels
+    by_module = [df.value for df in at.dataframe if "Flagged share" in df.value.columns][0]
+    assert "Recall" not in by_module.columns
+    assert "shown for 2014J only" in _texts(at)
+
+
+def test_capacity_slider_accepts_any_share(synthetic_env, matrix):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    at.slider(key="capacity").set_value(13).run()
+    assert not at.exception
+    n_val = int((matrix["code_presentation"] == "2014J").sum())
+    assert {m.label: m.value for m in at.metric}["Flagged"] == f"{round(0.13 * n_val):,}"

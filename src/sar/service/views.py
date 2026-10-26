@@ -4,8 +4,9 @@ Scoring uses the final model (sar.models.final): calibrated risk score, risk ban
 Students are flagged by ranking, not by one fixed threshold:
   * capacity ranking: the top share of the current cohort by risk (e.g. the top 20%)
   * wide net: everyone at or above the wide-net cutoff from models/final/config.json
-Each flagging rule carries the precision and recall measured for it on the validation presentation,
-read from models/final/metrics.json.
+Ranking orders students by calibrated score, breaks its ties (isotonic calibration has few distinct
+values) by the raw forest score, and then by row order. Precision, recall and the at-risk students
+caught or missed are computed from the cohort's own outcomes for whichever rule and share is chosen.
 
 Risk bands (Low, Medium, High) come from the calibrated score and the cutoffs named in
 sar.config.RISK_BANDS. The activity and score bands of the 3D view (DAY_BANDS, SCORE_BANDS) are a
@@ -45,20 +46,27 @@ def assign_risk_band(scores, cutoffs: dict) -> pd.Categorical:
     return pd.Categorical([edges[i][0] for i in idx], categories=BAND_NAMES, ordered=True)
 
 
-def score_presentation(fitted: dict, matrix: pd.DataFrame, presentation: str) -> pd.DataFrame:
-    """Key columns, calibrated risk score, raw model score, risk band and rank for one presentation.
+def risk_order(calibrated, raw) -> np.ndarray:
+    """Row positions from highest to lowest risk: by calibrated score, ties broken by the raw score,
+    then by row order. Because the calibration is monotonic, this is the raw-score order used for the
+    capacity table in metrics.json."""
+    calibrated, raw = np.asarray(calibrated, dtype=float), np.asarray(raw, dtype=float)
+    return np.lexsort((np.arange(len(raw)), -raw, -calibrated))
 
-    Rank 1 is the highest risk. Ranking uses the raw score: the calibration is monotonic, so this
-    gives the calibrated order with its ties broken, as in the capacity table of metrics.json.
-    """
+
+def score_presentation(fitted: dict, matrix: pd.DataFrame, presentation: str) -> pd.DataFrame:
+    """Key columns, calibrated risk score, raw model score, risk band and rank for one presentation,
+    plus the observed outcome (`at_risk`) when the matrix has it. Rank 1 is the highest risk."""
     part = matrix[matrix["code_presentation"] == presentation]
     out = part[KEY].copy().reset_index(drop=True)
     raw, cal = predict(fitted, part) if len(part) else (np.array([]), np.array([]))
     out["score"], out["raw_score"] = cal, raw
     out["band"] = assign_risk_band(cal, fitted["cutoffs"])
     rank = np.empty(len(out), dtype=int)
-    rank[np.argsort(-raw, kind="stable")] = np.arange(1, len(out) + 1)
+    rank[risk_order(cal, raw)] = np.arange(1, len(out) + 1)
     out["rank"] = rank
+    if "at_risk" in part:
+        out["at_risk"] = part["at_risk"].to_numpy()
     return out
 
 
@@ -67,44 +75,86 @@ class Flagging:
     rule: str                 # "capacity" or "wide_net"
     label: str
     flagged: pd.Series        # bool, aligned with the scored table
-    validation: dict          # precision, recall and flagged share on the validation presentation
-
-    def describe(self) -> str:
-        v = self.validation
-        return (f"{self.label}. On the validation presentation ({TEST_PRESENTATION}) this rule flagged "
-                f"{v['flagged_share']:.0%} of students, with precision {v['precision']:.2f} and recall "
-                f"{v['recall']:.2f} (models/final/metrics.json).")
 
 
-def capacity_shares(metrics: dict) -> list[float]:
-    """Capacity shares with validation figures in metrics.json, e.g. [0.05, 0.1, ..., 0.5]."""
-    return [int(k.rstrip("%")) / 100 for k in metrics["final"]["validation"]["capacity"]]
+@dataclass
+class FlagOutcome:
+    """Flagging results against the cohort's observed outcomes (Fail or Withdrawn = at risk)."""
+    students: int
+    flagged: int
+    at_risk: int
+    caught: int               # flagged and at risk (true positives)
+
+    @property
+    def missed(self) -> int:
+        return self.at_risk - self.caught
+
+    @property
+    def precision(self) -> float:
+        return self.caught / self.flagged if self.flagged else float("nan")
+
+    @property
+    def recall(self) -> float:
+        return self.caught / self.at_risk if self.at_risk else float("nan")
 
 
-def flag_capacity(scored: pd.DataFrame, share: float, metrics: dict) -> Flagging:
-    """Flag the top `share` of this cohort by risk; precision and recall come from the capacity table."""
-    key = f"{round(share * 100)}%"
-    table = metrics["final"]["validation"]["capacity"]
-    if key not in table:
-        raise ValueError(f"No validation figures for a {key} capacity; choose one of {', '.join(table)}")
+def flag_outcome(scored: pd.DataFrame, flagged) -> FlagOutcome:
+    """Precision, recall, caught and missed for a boolean flag, from the `at_risk` column of `scored`."""
+    flagged = np.asarray(flagged, dtype=bool)
+    y = scored["at_risk"].to_numpy() == 1
+    return FlagOutcome(len(scored), int(flagged.sum()), int(y.sum()), int((flagged & y).sum()))
+
+
+def flag_capacity(scored: pd.DataFrame, share: float) -> Flagging:
+    """Flag the top `share` of this cohort by risk (rank 1 first), for any share from 0 to 1."""
+    if not 0 <= share <= 1:
+        raise ValueError(f"Capacity share must be between 0 and 1, not {share}")
     k = int(round(share * len(scored)))
-    return Flagging("capacity", f"Top {key} of students by risk ({k:,} students)", scored["rank"] <= k, table[key])
+    return Flagging("capacity", f"Top {share:.0%} of students by risk ({k:,} students)", scored["rank"] <= k)
 
 
-def flag_wide_net(scored: pd.DataFrame, cutoffs: dict, metrics: dict) -> Flagging:
+def flag_wide_net(scored: pd.DataFrame, cutoffs: dict) -> Flagging:
     """Flag everyone at or above the wide-net cutoff, a calibrated score fixed before the cohort arrived."""
     cut = cutoffs["wide_net"]["score"]
-    return Flagging("wide_net", f"Wide net: calibrated risk score of at least {cut:.2f}", scored["score"] >= cut,
-                    metrics["final"]["validation"]["cutoffs"]["wide_net"])
+    return Flagging("wide_net", f"Wide net: calibrated risk score of at least {cut:.2f}", scored["score"] >= cut)
 
 
-def batch_summary(scored: pd.DataFrame) -> pd.DataFrame:
+def flagged_by_band(scored: pd.DataFrame) -> pd.Series:
+    """Number of flagged students in each risk band, highest band first. Needs a 'flagged' column."""
+    counts = scored.loc[scored["flagged"], "band"].value_counts()
+    return pd.Series({b: int(counts.get(b, 0)) for b in reversed(BAND_NAMES)})
+
+
+def band_evidence(scored: pd.DataFrame, min_cell: int = MIN_CELL) -> pd.DataFrame:
+    """Observed at-risk rate and lift inside each risk band, for the cohort ("All modules") and per module.
+
+    Lift is the band's at-risk rate divided by the cohort's overall at-risk rate. Cells with fewer
+    than `min_cell` students keep their count but have no rate or lift.
+    """
+    base = scored["at_risk"].mean()
+    rows = []
+    for module, g in [("All modules", scored), *scored.groupby("code_module")]:
+        for band in reversed(BAND_NAMES):
+            cell = g.loc[g["band"] == band, "at_risk"]
+            rate = cell.mean() if len(cell) >= min_cell else np.nan
+            rows.append({"code_module": module, "band": band, "students": len(cell), "at_risk_rate": rate,
+                         "lift": rate / base if base else np.nan})
+    return pd.DataFrame(rows)
+
+
+def batch_summary(scored: pd.DataFrame, outcomes: bool = False) -> pd.DataFrame:
     """Per module: students, flagged, flagged share and students per risk band, plus an 'All modules' row.
-    `scored` needs a boolean 'flagged' column from one of the flagging rules."""
+    `scored` needs a boolean 'flagged' column from one of the flagging rules. With `outcomes`, also the
+    observed at-risk rate, the recall (share of the module's at-risk students who are flagged) and the
+    precision, from the `at_risk` column."""
     def agg(g):
         counts = g["band"].value_counts()
-        return pd.Series({"Students": len(g), "Flagged": int(g["flagged"].sum()), "Flagged share": g["flagged"].mean(),
-                          **{b: int(counts.get(b, 0)) for b in reversed(BAND_NAMES)}})
+        row = {"Students": len(g), "Flagged": int(g["flagged"].sum()), "Flagged share": g["flagged"].mean(),
+               **{b: int(counts.get(b, 0)) for b in reversed(BAND_NAMES)}}
+        if outcomes:
+            o = flag_outcome(g, g["flagged"])
+            row.update({"At-risk rate": g["at_risk"].mean(), "Recall": o.recall, "Precision": o.precision})
+        return pd.Series(row)
 
     by_module = scored.groupby("code_module").apply(agg, include_groups=False)
     total = agg(scored).to_frame("All modules").T
