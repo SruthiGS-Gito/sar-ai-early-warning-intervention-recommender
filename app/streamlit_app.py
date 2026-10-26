@@ -29,7 +29,8 @@ import pandas as pd  # noqa: E402
 import plotly.graph_objects as go  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from sar.data.split import TEST_PRESENTATION, make_split  # noqa: E402
+from sar.config import CUTOFF_DAY  # noqa: E402
+from sar.data.split import TEST_PRESENTATION, make_split, overlap_report  # noqa: E402
 from sar.explain.chart import explanation_table, plot_explanation  # noqa: E402
 from sar.explain.shap_explain import explain_student, explanation_from_contributions, make_explainer  # noqa: E402
 from sar.recommend.neighbours import NeighbourPool  # noqa: E402
@@ -185,11 +186,6 @@ def score_source(presentation: str) -> str:
     return SCORE_SOURCE["training" if is_training_presentation(presentation) else "validation"]
 
 
-STATUS_LABELS = {"missing": "Not available yet", "unreadable": "File could not be read",
-                 "refused": "Refused: contains student-level rows", "missing_columns": "Missing required columns",
-                 "loaded": "Loaded"}
-
-
 CARD_MESSAGES = {"missing": "Not available yet.",
                  "unreadable": "The table could not be read.",
                  "refused": "Not shown: the file contains student-level rows, and only aggregated tables are shown.",
@@ -325,8 +321,9 @@ with lookup:
 
 with dashboard:
     st.subheader("Department Dashboard")
-    st.caption("Model-based counts by module are in the Batch Report tab.")
-    dept = team_table("department_risk", processed)
+    st.write("Risk bands and observed outcomes for each module, followed by the Day 30 engagement profiles of "
+             "the students.")
+    dept = team_table("department_risk", processed, heading=False)
     if dept is not None:
         st.caption(DEPT_NOTE.format(n=MIN_CELL))
         pres = validation_or_training(sorted(dept["code_presentation"].unique()), "dept_presentation")
@@ -334,10 +331,9 @@ with dashboard:
         if (part["score_source"] == "training").any():
             st.info(DEPT_TRAINING_NOTE)
         bands = {s: s.removeprefix("share_").capitalize() for s in BAND_SHARES}
-        view = part[["code_module", "code_presentation", "score_source", "students", "at_risk_rate",
-                     *reversed(BAND_SHARES)]].assign(score_source=part["score_source"].map(SCORE_SOURCE)).rename(
-            columns={"code_module": "Module", "code_presentation": "Presentation", "score_source": "Scores",
-                     "students": "Students", "at_risk_rate": "At-risk rate",
+        st.caption(f"All figures below are for {pres}; scores are {SCORE_SOURCE[part['score_source'].iloc[0]]}.")
+        view = part[["code_module", "students", "at_risk_rate", *reversed(BAND_SHARES)]].rename(
+            columns={"code_module": "Module", "students": "Students", "at_risk_rate": "At-risk rate",
                      **{s: f"{b} band" for s, b in bands.items()}})
         pcts = [c for c in view.columns if c.endswith(("rate", "band"))]
         small = part["suppressed"].astype(bool).to_numpy()
@@ -526,38 +522,90 @@ with batch:
                         f"show in 3D. {hidden_bands(bands)} smaller bands are hidden.")
             else:
                 st.plotly_chart(band_figure(bands), width="stretch")
-                st.caption(f"Each marker is a band of {pres} students: height and colour show the band's average "
-                           f"calibrated risk score, size shows how many students it holds. {hidden_bands(bands)} bands "
-                           f"with fewer than {MIN_CELL} students are not shown. Drag to rotate; hover for details.")
+                st.caption(f"Each marker is a group of {pres} students with the same days active by Day "
+                           f"{CUTOFF_DAY} (one horizontal axis) and average assessment score by Day {CUTOFF_DAY} "
+                           "(the other horizontal axis). The vertical axis and the colour both show the group's "
+                           "average calibrated risk score; the marker size shows how many students it holds. "
+                           f"Groups with fewer than {MIN_CELL} students are not shown ({hidden_bands(bands)} groups "
+                           "hidden). Drag to rotate; hover for details.")
+
+def band_reading(pres: str) -> pd.DataFrame | None:
+    """Observed at-risk rate and lift per band for a presentation: from the generated department table when it
+    is loaded, otherwise computed from the model's scores. None when neither is available."""
+    status = get_table("department_risk", processed)
+    if status.ok:
+        row = status.table[(status.table["code_presentation"] == pres) & (status.table["code_module"] == ALL_MODULES)]
+        if len(row) and not bool(row["suppressed"].iloc[0]):
+            row = row.iloc[0]
+            return pd.DataFrame({"Band": ["Low", "Medium", "High"],
+                                 "rate": [row[r] for r in BAND_RATES],
+                                 "lift": [row[r] / row["at_risk_rate"] for r in BAND_RATES]})
+    if not core_ok:
+        return None
+    ev = band_evidence(get_scores(processed, models, pres, fitted, matrix))
+    ev = ev[ev["code_module"] == ALL_MODULES].set_index("band").loc[["Low", "Medium", "High"]]
+    return pd.DataFrame({"Band": ev.index, "rate": ev["at_risk_rate"].to_numpy(), "lift": ev["lift"].to_numpy()})
+
 
 with about:
     st.subheader("About")
     if core_ok:
         val = ", ".join(metrics["validation_presentation"])
+        train_pres = ", ".join(sorted(set(matrix["code_presentation"]) - {val}))
         v = metrics["final"]["validation"]
         st.markdown("#### Model")
-        st.write(f"A Random Forest scores each student from {len(fitted['features'])} inputs known by Day 30: the module, VLE "
-                 "activity, assessment submissions and scores so far, registration timing, study load and previous "
-                 "attempts. Protected characteristics (gender, region, highest education, deprivation band, age band, "
-                 "disability) are not inputs. Isotonic calibration turns the forest's score into a calibrated risk "
-                 f"score. The model was trained on {', '.join(sorted(set(matrix['code_presentation']) - {val}))} and validated on "
-                 f"{val}, which it never saw during training: ROC-AUC {v['roc_auc']:.3f}, PR-AUC {v['pr_auc']:.3f}, "
-                 f"at-risk rate {v['prevalence']:.0%} among {v['n']:,} students.")
+        st.write(f"A Random Forest scores each student from {len(fitted['features'])} inputs known by Day "
+                 f"{CUTOFF_DAY}: the module, VLE activity, assessment submissions and scores so far, registration "
+                 "timing, study load and previous attempts. Protected characteristics (gender, region, highest "
+                 "education, deprivation band, age band, disability) are not inputs. Isotonic calibration turns the "
+                 f"forest's score into a calibrated risk score. Trained on {train_pres}; on {val}: ROC-AUC "
+                 f"{v['roc_auc']:.3f}, PR-AUC {v['pr_auc']:.3f}, at-risk rate {v['prevalence']:.0%} among "
+                 f"{v['n']:,} students.")
+        st.write("OULAD organises teaching into modules (courses), not departments; this application uses modules "
+                 "wherever a department view is shown.")
+
+        st.markdown("#### Design and validation")
+        overlap = overlap_report(matrix, val)
+        st.markdown(
+            f"- Prediction day: each student is scored from what is known by Day {CUTOFF_DAY} of the module; "
+            f"students who left on or before Day {CUTOFF_DAY} are not scored.\n"
+            f"- Temporal split by presentation: the model is trained on earlier presentations ({train_pres}) and "
+            f"checked on the latest one ({val}), as it would be used on a new intake.\n"
+            f"- Students who appear in both: {overlap['students in both']:,} students enrolled in a training "
+            f"presentation and in {val}; their {overlap['train rows removed from overlap']:,} training rows are "
+            "removed, so no student is seen in both.\n"
+            "- Cutoffs: the wide-net and top-20% cutoffs, and so the band edges, are chosen on out-of-fold scores "
+            "of the training presentations, never on the validation presentation.\n"
+            f"- {val} is a validation presentation, not an untouched test set: it was used to compare model "
+            "configurations, so its figures may be slightly optimistic.")
+
         st.markdown("#### Risk bands")
-        st.write("Each band starts at a calibrated-score cutoff chosen on out-of-fold training scores, never on the "
-                 "validation presentation.")
-        st.dataframe(pd.DataFrame({
+        st.write("Each band starts at a calibrated-score cutoff chosen on training data.")
+        show_table(pd.DataFrame({
             "Band": ["Low", "Medium", "High"],
             "Calibrated score": [f"below {edges['Medium']:.2f}", f"{edges['Medium']:.2f} to below {edges['High']:.2f}",
                                  f"{edges['High']:.2f} and above"],
-            "Cutoff": ["\u2013", "Wide net: 80% of at-risk training students reach it",
-                       "Top 20% of training students by risk"]}), hide_index=True)
+            "How the cutoff was set": [
+                "Everyone below the Medium cutoff.",
+                "In the training data, 8 in 10 students who went on to fail or withdraw scored at least this.",
+                "In the training data, the highest-scoring 1 in 5 students scored at least this."]}), {})
+
+        st.markdown("#### How to read the bands")
+        reading = band_reading(val)
+        if reading is not None:
+            show_table(reading.rename(columns={"rate": f"Observed at-risk rate, {val}", "lift": "Lift"}),
+                       {f"Observed at-risk rate, {val}": "{:.0%}", "Lift": "{:.2f}"}, missing=SMALL)
+            st.caption(f"Lift is the band's at-risk rate divided by the at-risk rate of all {val} students.")
+        st.write("The Medium band's at-risk rate is close to the cohort average, so a Medium band is not a warning "
+                 "on its own.")
+
         st.markdown("#### Capacity flagging")
         st.write("The Batch Report ranks the chosen cohort by calibrated risk (ties broken by the forest's raw score) "
-                 "and flags the highest-risk share set on the slider, to match a team with a fixed number of contacts. "
-                 "Precision, recall and the at-risk students caught or missed are computed from that cohort's observed "
-                 "outcomes. The wide-net rule instead flags everyone above a fixed cutoff, so the share it flags varies "
-                 "between intakes.")
+                 "and flags the highest-risk share set on the slider, to match a team with a fixed number of "
+                 "contacts; the share can apply to the whole cohort or to each module. Precision, recall and the "
+                 "at-risk students caught or missed are computed from that cohort's observed outcomes. The wide-net "
+                 "rule instead flags everyone above a fixed cutoff, so the share it flags varies between intakes.")
+
         st.markdown("#### Limitations")
         groups = metrics["final"].get("fairness_validation", {}).get("groups", {})
         gaps = []
@@ -569,11 +617,19 @@ with about:
             gaps.append(f"ages 35-55 {g['35-55']['recall']:.0%} and under 35 {g['0-35']['recall']:.0%}")
         no_due = matrix.groupby("code_module")["n_assessments_due"].max()
         no_due = ", ".join(no_due[no_due == 0].index) or "none"
+        val_scored = get_scores(processed, models, val, fitted, matrix)
+        val_scored = val_scored.assign(flagged=flag_capacity(val_scored, 0.2).flagged)
+        recall = batch_summary(val_scored, outcomes=True).drop(index=ALL_MODULES)["Recall"].sort_values()
+        lowest = "; ".join(f"{m} {r:.0%}" for m, r in recall.head(2).items())
         st.markdown(
             "- Support suggestions are rule-based: they match the model's risk drivers to support types and have not "
             "been tested as interventions.\n"
             "- OULAD records no interventions or their outcomes, so the effect of contacting a student is unknown.\n"
-            f"- In some modules no assessment is due by Day 30 ({no_due}), so the model has no early scores there.\n"
+            f"- In some modules no assessment is due by Day {CUTOFF_DAY} ({no_due}), so the model has no early "
+            "scores there.\n"
+            f"- With 20% capacity across the whole cohort on {val}, the lowest module recall is {lowest} (share of "
+            "the module's at-risk students who are flagged); the Batch Report can apply capacity to each module "
+            "instead.\n"
             + (f"- Recall differs between groups at the top-20% cutoff on {val}: {'; '.join(gaps)}.\n" if gaps else "")
             + f"- Validation figures come from one presentation ({val}); training presentations are in-sample.")
     else:
@@ -589,23 +645,14 @@ with about:
                 "10.1038/sdata.2017.171 (2017).")
 
     with st.expander("Data details"):
-        if model_l.ok:
-            st.write(f"Model built (UTC): {final.config.get('created_utc', 'unknown')}")
-        for loaded in (matrix_l, model_l):
-            if not loaded.ok:
-                st.info(loaded.message)
-        for name, spec in OPTIONAL_TABLES.items():
-            status = get_table(name, processed)
-            st.markdown(
-                f"**{spec.title}** ({spec.ticket}): {STATUS_LABELS[status.state]}"
-                + (f", updated {status.updated}" if status.updated else "") + "\n"
-                f"- Expected file: `data/processed/{spec.file}`\n"
-                f"- Required columns: {', '.join(f'`{c}`' for c in spec.columns)}")
-            if not status.ok:
-                st.caption(status.message)
+        built = model_l.value.config.get("created_utc", "unknown") if model_l.ok else "not built"
+        st.markdown(f"- Model built (UTC): {built}\n"
+                    f"- Day 30 data: {'loaded' if matrix_l.ok else 'not loaded'}\n"
+                    f"- Model: {'loaded' if model_l.ok else 'not loaded'}\n"
+                    + "\n".join(f"- {spec.title}: {'loaded' if get_table(name, processed).ok else 'not loaded'}"
+                                 for name, spec in OPTIONAL_TABLES.items()))
         st.markdown("Rebuild everything from the repository root:")
         st.code("python scripts/run_baseline.py        # Day 30 feature matrix\n"
                 "python scripts/train_final.py         # final model\n"
                 "python scripts/precompute_shap.py     # optional: explanations for the validation presentation\n"
                 "python scripts/build_team_tables.py   # department, funnel and profile tables", language="bash")
-        st.caption("File formats and display rules: docs/app.md. Model details: docs/final_model.md.")

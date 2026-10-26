@@ -58,8 +58,8 @@ def test_app_runs_with_nothing_available(empty_env):
     assert "not available yet" in main and "Data details" in main
     assert not DEVELOPER_TEXT.search(main), DEVELOPER_TEXT.search(main)
     assert "run_baseline.py" in about and "train_final.py" in about and "build_team_tables.py" in about
-    for ticket in ["ticket 203", "ticket 207", "ticket 210"]:
-        assert f"not available yet: {ticket}" in about
+    assert "- Day 30 data: not loaded" in about and "- Model: not loaded" in about
+    assert "SCRUM-" not in about and "ticket" not in about and "data/processed" not in about
 
 
 def test_status_cards_describe_each_team_table(empty_env):
@@ -70,11 +70,10 @@ def test_status_cards_describe_each_team_table(empty_env):
     main, about = _main_tab_texts(at), _about_text(at)
     for spec in OPTIONAL_TABLES.values():
         assert f"#### {spec.title}" in main and spec.description in main
-        assert f"**{spec.title}** ({spec.ticket}): Not available yet" in about
-        assert f"`data/processed/{spec.file}`" in about
-        assert all(f"`{c}`" in about for c in spec.columns)
+        assert f"- {spec.title}: not loaded" in about
+        assert spec.file not in about and not any(f"`{c}`" in about for c in spec.columns)
     assert main.count("Not available yet. Details are in the About tab") == 3
-    assert "Model-based counts by module are in the Batch Report tab." in main
+    assert "Risk bands and observed outcomes for each module" in main
 
 
 def test_main_tabs_hold_no_developer_text_and_about_holds_the_details(tables_env):
@@ -83,13 +82,16 @@ def test_main_tabs_hold_no_developer_text_and_about_holds_the_details(tables_env
     assert not at.exception
     main, about = _main_tab_texts(at), _about_text(at)
     assert not DEVELOPER_TEXT.search(main), DEVELOPER_TEXT.search(main)
-    assert "24 inputs known by Day 30" in about and "isotonic calibration" in about.lower() and "validated on 2014J" in about
+    assert "24 inputs known by Day 30" in about and "isotonic calibration" in about.lower()
+    assert "Trained on 2013B, 2013J, 2014B; on 2014J: ROC-AUC" in about
     bands = [t for t in at.tabs if t.label == "About"][0].dataframe[0].value
     assert list(bands["Band"]) == ["Low", "Medium", "High"] and "Capacity flagging" in about
     assert "rule-based" in about and "no interventions" in about
     assert '"This dataset is released under CC-BY 4.0 license."' in about
     assert "doi: 10.1038/sdata.2017.171 (2017)." in about
     assert "Model built (UTC)" in about and "python scripts/build_team_tables.py" in about
+    assert "- Department risk: loaded" in about and "SCRUM-" not in about and "data/processed" not in about
+    assert "docs/" not in about
 
 
 def test_app_with_synthetic_data_and_model(synthetic_env, matrix):
@@ -180,9 +182,8 @@ def test_team_tables_are_shown_with_charts(tables_env):
     assert not at.exception
     text = _texts(at)
     assert "not available yet" not in text and "**Status:**" not in text
-    for title in ["Department risk", "Student profiles"]:
-        assert f"#### {title}" in text
-    assert "#### Retention funnel" not in text
+    assert "#### Student profiles" in text
+    assert "#### Department risk" not in text and "#### Retention funnel" not in text
     assert "Retrospective, descriptive view" in text and "not model inputs" in text
     assert "Counts under 20 are hidden" in text and "{" not in text
     validation = prof[prof["scope"] == "validation"]
@@ -209,7 +210,7 @@ def test_student_level_team_table_is_refused(synthetic_env):
     assert not at.exception
     main, about = _main_tab_texts(at), _about_text(at)
     assert "the file contains student-level rows" in main
-    assert "Refused: contains student-level rows" in about and "Retention funnel is not available yet" in about
+    assert "- Department risk: not loaded" in about and "- Retention funnel: not loaded" in about
 
 
 def test_missing_columns_are_named_in_the_data_details(synthetic_env):
@@ -218,9 +219,7 @@ def test_missing_columns_are_named_in_the_data_details(synthetic_env):
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
     assert "the file does not have the expected columns" in _main_tab_texts(at)
-    about = _about_text(at)
-    assert "Missing required columns" in about
-    assert "missing expected columns: code_module, code_presentation, stage_order, stage_key, students" in about
+    assert "- Retention funnel: not loaded" in _about_text(at)
 
 
 def test_funnel_shows_a_stage_that_does_not_apply_as_not_applicable(synthetic_env, matrix):
@@ -252,8 +251,9 @@ def test_band_views_default_to_the_validation_presentation(tables_env):
     assert "dept_presentation" not in keys and "batch_presentation" not in keys
     assert text.count("Showing 2014J, the validation presentation.") == 2
     assert text.count("Training presentations have in-sample scores") == 2
-    dept = [df.value for df in at.dataframe if "Scores" in df.value.columns and "Module" in df.value.columns][0]
-    assert set(dept["Presentation"]) == {"2014J"} and set(dept["Scores"]) == {"validation (2014J)"}
+    dept = [df.value for df in at.dataframe if "High band" in df.value.columns][0]
+    assert "Presentation" not in dept.columns and "Scores" not in dept.columns
+    assert "All figures below are for 2014J; scores are validation (2014J)." in text
 
 
 def test_training_presentations_appear_only_after_opting_in(tables_env):
@@ -372,3 +372,65 @@ def test_calibration_chart_replaces_the_histogram(tables_env, matrix, small_fina
     text = _texts(at)
     assert "limited number of distinct values because isotonic" in text and "Band cutoffs: Medium from" in text
     assert not [s for s in _chart_specs(at) if any(t.get("type") == "histogram" for t in s["data"])]
+
+
+def test_about_explains_the_bands_design_and_limitations(tables_env, matrix, small_final):
+    from sar.service import views
+
+    env, _ = tables_env
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception
+    about_tab = [t for t in at.tabs if t.label == "About"][0]
+    about = _texts(about_tab)
+    reading = [df.value for df in about_tab.dataframe if "Lift" in df.value.columns][0].set_index("Band")
+    dept = pd.read_csv(env / "data" / "processed" / "department_risk.csv")
+    row = dept[(dept["code_presentation"] == "2014J") & (dept["code_module"] == "All modules")].iloc[0]
+    for band in ["Low", "Medium", "High"]:
+        rate = row[f"rate_{band.lower()}"]
+        assert reading.loc[band, "Observed at-risk rate, 2014J"] == f"{rate:.0%}"
+        assert reading.loc[band, "Lift"] == f"{rate / row['at_risk_rate']:.2f}"
+    assert "a Medium band is not a warning on its own" in about
+    for phrase in ["Prediction day", "Day 30", "Temporal split by presentation", "Students who appear in both",
+                   "out-of-fold scores", "is a validation presentation, not an untouched test set",
+                   "modules (courses), not departments"]:
+        assert phrase in about, phrase
+    scored = views.score_presentation(small_final[0], matrix, "2014J")
+    scored = scored.assign(flagged=views.flag_capacity(scored, 0.2).flagged)
+    recall = views.batch_summary(scored, outcomes=True).drop(index="All modules")["Recall"].sort_values()
+    lowest = "; ".join(f"{m} {r:.0%}" for m, r in recall.head(2).items())
+    assert f"the lowest module recall is {lowest}" in about
+    bands = [df.value for df in about_tab.dataframe if "How the cutoff was set" in df.value.columns][0]
+    assert bands["How the cutoff was set"].str.contains("training data|below the Medium").all()
+
+
+def test_three_d_view_caption_explains_the_encoding(empty_env):
+    from conftest import FEATURES, SMALL_PARAMS, synthetic_matrix
+
+    from sar.data.split import make_split
+    from sar.models import final
+
+    big = synthetic_matrix(n=3000, seed=3)
+    processed = empty_env / "data" / "processed"
+    processed.mkdir(parents=True)
+    big.to_csv(processed / "day30_feature_matrix.csv", index=False)
+    train, val = make_split(big)
+    fitted = final.fit(train, final.final_features(FEATURES), final.forest_builder(SMALL_PARAMS))
+    metrics = {"validation_presentation": ["2014J"],
+               "final": {"cutoffs_from_oof": fitted["cutoffs"], "validation": final.evaluate(fitted, val)}}
+    save_final(fitted, {"seed": 42}, metrics, empty_env / "models" / "final")
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    at.toggle(key="show_3d").set_value(True).run()
+    assert not at.exception
+    text = _texts(at)
+    assert "days active by Day 30" in text and "average assessment score by Day 30" in text
+    assert "marker size shows how many students" in text and "fewer than 20 students are not shown" in text
+
+
+def test_about_works_with_a_model_but_no_data(empty_env, small_final):
+    fitted, metrics = small_final
+    save_final(fitted, {"seed": 42, "created_utc": "2026-01-01T00:00:00+00:00"}, metrics,
+               empty_env / "models" / "final")
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception
+    about = _about_text(at)
+    assert "- Model built (UTC): 2026-01-01T00:00:00+00:00" in about and "- Day 30 data: not loaded" in about
