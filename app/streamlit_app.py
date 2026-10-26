@@ -1,12 +1,13 @@
 """SCRUM-189: Streamlit app for the Day 30 early-warning model.
 
 Run from the repo root:  streamlit run app/streamlit_app.py
-Tabs: Student Lookup, Department Dashboard, Retention Funnel, Batch Report.
+Tabs: Student Lookup, Department Dashboard, Retention Funnel, Batch Report, About.
 
 * The final model (models/final/) scores students with a calibrated risk score, a risk band
   (Low, Medium, High) and a rank. Students are flagged by capacity ranking or by the wide-net cutoff.
 * Data, model, explainer, precomputed explanations and the similar-student pool load once (cached).
-* Anything missing shows a message; the app does not crash on it.
+* Anything missing shows a message; the app does not crash on it. The main tabs speak to staff; file
+  names, build commands, ticket references and build dates are kept in the About tab.
 * Model-based band views (Department risk, Batch Report) show the validation presentation by
   default. A training presentation, whose scores are in-sample, appears only after the user opts in,
   with the in-sample note beside the choice and a score-source column in every exportable table.
@@ -62,8 +63,8 @@ from sar.tables.department import ALL_MODULES, BAND_RATES, BAND_SHARES  # noqa: 
 from sar.tables.profiles import PROFILE_FEATURES  # noqa: E402
 from sar.viz.plots import AT_RISK, NEUTRAL, ON_TRACK  # noqa: E402
 
-MODEL_NOTE = ("Model: Random Forest on {n} Day 30 inputs, without background characteristics, with isotonic "
-              "calibration. Validated on {val}. Students are ranked by calibrated risk; details in docs/final_model.md.")
+MODEL_NOTE = ("Validated on {val}. Students are ranked by calibrated risk and placed in Low, Medium or High risk "
+              "bands; the About tab explains the model, the bands and their limits.")
 BAND_HELP = ("Risk bands come from the calibrated risk score: Low below the wide-net cutoff ({medium:.2f}), "
              "Medium from it, High from the top-20% cutoff ({high:.2f}). Both cutoffs were set on training data.")
 TRAINING_NOTE = ("This is a training presentation: the model learned from these students' outcomes, so their scores "
@@ -180,34 +181,29 @@ STATUS_LABELS = {"missing": "Not available yet", "unreadable": "File could not b
                  "loaded": "Loaded"}
 
 
+CARD_MESSAGES = {"missing": "Not available yet.",
+                 "unreadable": "The table could not be read.",
+                 "refused": "Not shown: the file contains student-level rows, and only aggregated tables are shown.",
+                 "missing_columns": "Not shown: the file does not have the expected columns."}
+
+
 def status_card(status: TableStatus) -> None:
-    """Card for a team table that cannot be shown: what it is, who owns it, what file is expected, and why."""
-    spec = status.spec
+    """Card for a team table that cannot be shown: what it is and why. Technical details are in About."""
     with st.container(border=True):
-        st.markdown(f"#### {spec.title}")
-        st.write(spec.description)
-        st.markdown(
-            f"- **Owner ticket:** {spec.ticket}\n"
-            f"- **Expected file:** `data/processed/{spec.file}`\n"
-            f"- **Required columns:** {', '.join(f'`{c}`' for c in spec.columns)}\n"
-            f"- **Status:** {STATUS_LABELS[status.state]}"
-        )
-        if status.state == "missing":
-            st.info(status.message)
-        else:
-            st.warning(status.message)
-        st.caption("File format and display rules: docs/app.md")
+        st.markdown(f"#### {status.spec.title}")
+        st.write(status.spec.description)
+        (st.info if status.state == "missing" else st.warning)(
+            f"{CARD_MESSAGES[status.state]} Details are in the About tab, under Data details.")
 
 
 def team_table(name: str, processed_dir: str, heading: bool = True) -> pd.DataFrame | None:
-    """The team table when it can be shown (after its title and source line); otherwise its status card."""
+    """The team table when it can be shown (after its title); otherwise its status card."""
     status = get_table(name, processed_dir)
     if not status.ok:
         status_card(status)
         return None
     if heading:
         st.markdown(f"#### {status.spec.title}")
-    st.caption(f"{status.message} Built by scripts/build_team_tables.py ({status.spec.ticket}).")
     return status.table
 
 
@@ -225,9 +221,9 @@ core_ok = matrix_l.ok and model_l.ok
 
 
 def core_message() -> None:
-    for loaded in (matrix_l, model_l):
-        if not loaded.ok:
-            st.info(loaded.message)
+    missing = [name for name, loaded in (("the Day 30 data", matrix_l), ("the model", model_l)) if not loaded.ok]
+    st.info(f"This view needs {' and '.join(missing)}, which are not available yet. Details are in the About tab, "
+            "under Data details.")
 
 
 if core_ok:
@@ -235,9 +231,10 @@ if core_ok:
     final = model_l.value
     fitted, cutoffs, metrics = final.fitted, final.fitted["cutoffs"], final.metrics
     edges = dict(risk_band_edges(cutoffs))
-    st.caption(MODEL_NOTE.format(n=len(fitted["features"]), val=", ".join(metrics["validation_presentation"])))
+    st.caption(MODEL_NOTE.format(val=", ".join(metrics["validation_presentation"])))
 
-lookup, dashboard, funnel, batch = st.tabs(["Student Lookup", "Department Dashboard", "Retention Funnel", "Batch Report"])
+lookup, dashboard, funnel, batch, about = st.tabs(["Student Lookup", "Department Dashboard", "Retention Funnel",
+                                                  "Batch Report", "About"])
 
 with lookup:
     st.subheader("Student Lookup")
@@ -486,3 +483,83 @@ with batch:
                 st.caption(f"Each marker is a band of {pres} students: height and colour show the band's average "
                            f"calibrated risk score, size shows how many students it holds. {hidden_bands(bands)} bands "
                            f"with fewer than {MIN_CELL} students are not shown. Drag to rotate; hover for details.")
+
+with about:
+    st.subheader("About")
+    if core_ok:
+        val = ", ".join(metrics["validation_presentation"])
+        v = metrics["final"]["validation"]
+        st.markdown("#### Model")
+        st.write(f"A Random Forest scores each student from {len(fitted['features'])} inputs known by Day 30: the module, VLE "
+                 "activity, assessment submissions and scores so far, registration timing, study load and previous "
+                 "attempts. Protected characteristics (gender, region, highest education, deprivation band, age band, "
+                 "disability) are not inputs. Isotonic calibration turns the forest's score into a calibrated risk "
+                 f"score. The model was trained on {', '.join(sorted(set(matrix['code_presentation']) - {val}))} and validated on "
+                 f"{val}, which it never saw during training: ROC-AUC {v['roc_auc']:.3f}, PR-AUC {v['pr_auc']:.3f}, "
+                 f"at-risk rate {v['prevalence']:.0%} among {v['n']:,} students.")
+        st.markdown("#### Risk bands")
+        st.write("Each band starts at a calibrated-score cutoff chosen on out-of-fold training scores, never on the "
+                 "validation presentation.")
+        st.dataframe(pd.DataFrame({
+            "Band": ["Low", "Medium", "High"],
+            "Calibrated score": [f"below {edges['Medium']:.2f}", f"{edges['Medium']:.2f} to below {edges['High']:.2f}",
+                                 f"{edges['High']:.2f} and above"],
+            "Cutoff": ["\u2013", "Wide net: 80% of at-risk training students reach it",
+                       "Top 20% of training students by risk"]}), hide_index=True)
+        st.markdown("#### Capacity flagging")
+        st.write("The Batch Report ranks the chosen cohort by calibrated risk (ties broken by the forest's raw score) "
+                 "and flags the highest-risk share set on the slider, to match a team with a fixed number of contacts. "
+                 "Precision, recall and the at-risk students caught or missed are computed from that cohort's observed "
+                 "outcomes. The wide-net rule instead flags everyone above a fixed cutoff, so the share it flags varies "
+                 "between intakes.")
+        st.markdown("#### Limitations")
+        groups = metrics["final"].get("fairness_validation", {}).get("groups", {})
+        gaps = []
+        if "gender" in groups:
+            g = groups["gender"]
+            gaps.append(f"women {g['F']['recall']:.0%} and men {g['M']['recall']:.0%}")
+        if "age_band" in groups:
+            g = groups["age_band"]
+            gaps.append(f"ages 35-55 {g['35-55']['recall']:.0%} and under 35 {g['0-35']['recall']:.0%}")
+        no_due = matrix.groupby("code_module")["n_assessments_due"].max()
+        no_due = ", ".join(no_due[no_due == 0].index) or "none"
+        st.markdown(
+            "- Support suggestions are rule-based: they match the model's risk drivers to support types and have not "
+            "been tested as interventions.\n"
+            "- OULAD records no interventions or their outcomes, so the effect of contacting a student is unknown.\n"
+            f"- In some modules no assessment is due by Day 30 ({no_due}), so the model has no early scores there.\n"
+            + (f"- Recall differs between groups at the top-20% cutoff on {val}: {'; '.join(gaps)}.\n" if gaps else "")
+            + f"- Validation figures come from one presentation ({val}); training presentations are in-sample.")
+    else:
+        st.info("The model description appears here once the Day 30 data and the model are available.")
+
+    st.markdown("#### Data source")
+    st.write("Open University Learning Analytics Dataset (OULAD). As stated on the dataset page "
+             "(https://research.stem.open.ac.uk/ouanalyse/open-dataset-more/):")
+    st.markdown('- License: "This dataset is released under CC-BY 4.0 license." '
+                "(https://creativecommons.org/licenses/by/4.0/)\n"
+                '- Citing the dataset: "When citing the dataset please use the following reference:" Kuzilek J., '
+                "Hlosta M., Zdrahal Z. Open University Learning Analytics dataset Sci. Data 4:170171 doi: "
+                "10.1038/sdata.2017.171 (2017).")
+
+    with st.expander("Data details"):
+        if model_l.ok:
+            st.write(f"Model built (UTC): {final.config.get('created_utc', 'unknown')}")
+        for loaded in (matrix_l, model_l):
+            if not loaded.ok:
+                st.info(loaded.message)
+        for name, spec in OPTIONAL_TABLES.items():
+            status = get_table(name, processed)
+            st.markdown(
+                f"**{spec.title}** ({spec.ticket}): {STATUS_LABELS[status.state]}"
+                + (f", updated {status.updated}" if status.updated else "") + "\n"
+                f"- Expected file: `data/processed/{spec.file}`\n"
+                f"- Required columns: {', '.join(f'`{c}`' for c in spec.columns)}")
+            if not status.ok:
+                st.caption(status.message)
+        st.markdown("Rebuild everything from the repository root:")
+        st.code("python scripts/run_baseline.py        # Day 30 feature matrix\n"
+                "python scripts/train_final.py         # final model\n"
+                "python scripts/precompute_shap.py     # optional: explanations for the validation presentation\n"
+                "python scripts/build_team_tables.py   # department, funnel and profile tables", language="bash")
+        st.caption("File formats and display rules: docs/app.md. Model details: docs/final_model.md.")

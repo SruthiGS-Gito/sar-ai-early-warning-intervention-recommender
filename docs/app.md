@@ -42,8 +42,10 @@ The Batch Report offers two rules.
 | Department Dashboard | Department risk for a chosen presentation (table and stacked band-share chart) and the student profiles (table, descriptions and at-risk rate chart); a pointer to Batch Report for flagged counts | tickets 203 and 210 |
 | Retention Funnel | The six-stage funnel for a chosen presentation and module (chart and table), with a note that it is retrospective | ticket 207 |
 | Batch Report | For a presentation: the flagging rule; students, flagged, at-risk caught and missed, precision and recall for that rule; flagged students per risk band; a by-module table with students per risk band and, for the validation presentation, each module's at-risk rate, recall and precision; the observed at-risk rate and lift inside each band; and how calibrated risk spreads across the bands. The flagged list (closed expander, CSV download with band and rank) and an optional 3D view of average risk by activity and score bands (bands under 20 students hidden) are opt-in | final model |
+| About | The model, the risk bands and their cutoffs, how capacity flagging works, limitations (including group recall gaps from `metrics.json`), the OULAD licence and citation, and a Data details expander with the model build date, the status of each table and the rebuild commands | final model, tickets 203, 207 and 210 |
 
 Display rules:
+- The main tabs speak to staff. Ticket numbers, file names and paths, build commands, row counts and build dates appear only in the About tab.
 - Aggregated by default. No student is shown until one is chosen, and the flagged list stays closed.
 - A student's risk is shown as a band and a rank, not as a number.
 - Students from training presentations are labelled, because their scores are optimistic.
@@ -91,8 +93,8 @@ Credit: the feature choice and the range of cluster counts draw on Gouri's engag
 - Licence of the source data, as stated on the OULAD page (https://research.stem.open.ac.uk/ouanalyse/open-dataset-more/): "This dataset is released under CC-BY 4.0 license." Reference required when citing the dataset: Kuzilek J., Hlosta M., Zdrahal Z. Open University Learning Analytics dataset Sci. Data 4:170171 doi: 10.1038/sdata.2017.171 (2017). See the README.
 
 How the app handles each table:
-- **Missing file:** a status card with the ticket and the build command.
-- **Missing columns:** a message naming them.
+- **Missing file:** a card saying the table is not available yet; the ticket, the expected file and the build command are under About, Data details.
+- **Missing columns:** a card saying the file does not have the expected columns; About, Data details names them.
 - **File with an `id_student` column:** refused.
 - **None of these cases** crashes the app.
 

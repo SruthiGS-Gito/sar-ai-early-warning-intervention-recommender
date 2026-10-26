@@ -1,5 +1,7 @@
 """Run the Streamlit app headless on synthetic data (streamlit.testing.v1.AppTest)."""
 
+import re
+
 import pandas as pd
 import pytest
 
@@ -14,7 +16,7 @@ AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 
 def _texts(at) -> str:
     parts = [e.value for e in at.info] + [e.value for e in at.warning] + [e.value for e in at.markdown]
-    parts += [e.value for e in at.success]
+    parts += [e.value for e in at.success] + [e.value for e in at.code]
     parts += [e.value for e in at.caption] + [str(e.value) for e in at.metric]
     return "\n".join(str(p) for p in parts)
 
@@ -36,15 +38,28 @@ def synthetic_env(empty_env, matrix, small_final):
     return empty_env
 
 
+MAIN_TABS = ["Student Lookup", "Department Dashboard", "Retention Funnel", "Batch Report"]
+DEVELOPER_TEXT = re.compile(r"SCRUM-|ticket \d|scripts/|\.py\b|docs/|models/|metrics\.json|last updated|\d+ rows")
+
+
+def _main_tab_texts(at) -> str:
+    return "\n".join(_texts(t) for t in at.tabs if t.label in MAIN_TABS)
+
+
+def _about_text(at) -> str:
+    return _texts([t for t in at.tabs if t.label == "About"][0])
+
+
 def test_app_runs_with_nothing_available(empty_env):
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
-    text = _texts(at)
-    assert "run_baseline.py" in text and "train_final.py" in text
+    assert [t.label for t in at.tabs] == [*MAIN_TABS, "About"]
+    main, about = _main_tab_texts(at), _about_text(at)
+    assert "not available yet" in main and "Data details" in main
+    assert not DEVELOPER_TEXT.search(main), DEVELOPER_TEXT.search(main)
+    assert "run_baseline.py" in about and "train_final.py" in about and "build_team_tables.py" in about
     for ticket in ["ticket 203", "ticket 207", "ticket 210"]:
-        assert f"not available yet: {ticket}" in text
-    assert text.count("Build it with: python scripts/build_team_tables.py") == 3
-    assert [t.label for t in at.tabs] == ["Student Lookup", "Department Dashboard", "Retention Funnel", "Batch Report"]
+        assert f"not available yet: {ticket}" in about
 
 
 def test_status_cards_describe_each_team_table(empty_env):
@@ -52,15 +67,29 @@ def test_status_cards_describe_each_team_table(empty_env):
 
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
-    text = _texts(at)
+    main, about = _main_tab_texts(at), _about_text(at)
     for spec in OPTIONAL_TABLES.values():
-        assert f"#### {spec.title}" in text and spec.description in text
-        assert f"**Owner ticket:** {spec.ticket}" in text
-        assert f"`data/processed/{spec.file}`" in text
-        assert all(f"`{c}`" in text for c in spec.columns)
-    assert text.count("**Status:** Not available yet") == 3
-    assert text.count("File format and display rules: docs/app.md") == 3
-    assert "Model-based counts by module are in the Batch Report tab." in text
+        assert f"#### {spec.title}" in main and spec.description in main
+        assert f"**{spec.title}** ({spec.ticket}): Not available yet" in about
+        assert f"`data/processed/{spec.file}`" in about
+        assert all(f"`{c}`" in about for c in spec.columns)
+    assert main.count("Not available yet. Details are in the About tab") == 3
+    assert "Model-based counts by module are in the Batch Report tab." in main
+
+
+def test_main_tabs_hold_no_developer_text_and_about_holds_the_details(tables_env):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    at.toggle(key="show_3d").set_value(True).run()
+    assert not at.exception
+    main, about = _main_tab_texts(at), _about_text(at)
+    assert not DEVELOPER_TEXT.search(main), DEVELOPER_TEXT.search(main)
+    assert "24 inputs known by Day 30" in about and "isotonic calibration" in about.lower() and "validated on 2014J" in about
+    bands = [t for t in at.tabs if t.label == "About"][0].dataframe[0].value
+    assert list(bands["Band"]) == ["Low", "Medium", "High"] and "Capacity flagging" in about
+    assert "rule-based" in about and "no interventions" in about
+    assert '"This dataset is released under CC-BY 4.0 license."' in about
+    assert "doi: 10.1038/sdata.2017.171 (2017)." in about
+    assert "Model built (UTC)" in about and "python scripts/build_team_tables.py" in about
 
 
 def test_app_with_synthetic_data_and_model(synthetic_env, matrix):
@@ -68,7 +97,7 @@ def test_app_with_synthetic_data_and_model(synthetic_env, matrix):
     assert not at.exception
     text = _texts(at)
     assert "provisional" not in text.lower() and "threshold" not in text.lower()
-    assert "Validated on 2014J" in text and "24 Day 30 inputs" in text
+    assert "Validated on 2014J" in text and "24 inputs known by Day 30" in _about_text(at)
     n_val = int((matrix["code_presentation"] == "2014J").sum())
     assert f"{n_val:,}" in text                                      # batch report student count
     assert at.radio(key="flag_rule").value == "Capacity ranking"     # ranking is the default rule
@@ -177,19 +206,20 @@ def test_student_level_team_table_is_refused(synthetic_env):
     pd.DataFrame({"code_module": ["AAA"], "id_student": [1]}).to_csv(processed / "department_risk.csv", index=False)
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
-    text = _texts(at)
-    assert "student-level rows" in text and "**Status:** Refused: contains student-level rows" in text
-    assert "Retention funnel is not available yet" in text
+    main, about = _main_tab_texts(at), _about_text(at)
+    assert "the file contains student-level rows" in main
+    assert "Refused: contains student-level rows" in about and "Retention funnel is not available yet" in about
 
 
-def test_missing_columns_are_named_on_the_card(synthetic_env):
+def test_missing_columns_are_named_in_the_data_details(synthetic_env):
     processed = synthetic_env / "data" / "processed"
     pd.DataFrame({"stage": ["Registered"]}).to_csv(processed / "retention_funnel.csv", index=False)
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
-    text = _texts(at)
-    assert "**Status:** Missing required columns" in text
-    assert "missing expected columns: code_module, code_presentation, stage_order, stage_key, students" in text
+    assert "the file does not have the expected columns" in _main_tab_texts(at)
+    about = _about_text(at)
+    assert "Missing required columns" in about
+    assert "missing expected columns: code_module, code_presentation, stage_order, stage_key, students" in about
 
 
 def test_funnel_shows_a_stage_that_does_not_apply_as_not_applicable(synthetic_env, matrix):
