@@ -106,7 +106,8 @@ def test_app_with_synthetic_data_and_model(synthetic_env, matrix):
     assert cards["Flagged"] == f"{round(0.2 * n_val):,}"               # top 20% flagged
     assert {"Students", "Flagged", "At-risk caught", "At-risk missed", "Precision", "Recall"} <= set(cards)
     val = matrix[matrix["code_presentation"] == "2014J"]
-    assert int(cards["At-risk caught"].replace(",", "")) + int(cards["At-risk missed"].replace(",", "")) ==         int(val["at_risk"].sum())
+    caught, missed = (int(cards[k].replace(",", "")) for k in ["At-risk caught", "At-risk missed"])
+    assert caught + missed == int(val["at_risk"].sum())
     assert "Flagged students by risk band: High" in text and "can include Medium students" in text
     assert "Observed at-risk rate inside each risk band" in text and "lift" in text
     by_module = [df.value for df in at.dataframe if "Flagged share" in df.value.columns][0]
@@ -314,7 +315,7 @@ def test_tables_and_charts_are_formatted_for_reading(tables_env):
     profiles = [f for f in frames if "Mean clicks" in f.columns][0]
     assert {"Mean active days", "Mean days inactive before Day 30", "Mean assessments submitted",
             "Mean assessments missed"} <= set(profiles.columns)
-    rates = profiles["At-risk rate"].astype(float)
+    rates = profiles["At-risk rate"].str.rstrip("%").astype(float)
     assert rates.is_monotonic_decreasing
     assert any(e.label == "What each profile means" for e in at.expander)
     specs = _chart_specs(at)
@@ -324,3 +325,50 @@ def test_tables_and_charts_are_formatted_for_reading(tables_env):
     assert "All modules" in stacked["data"][0]["x"] and stacked["data"][0]["texttemplate"] == "%{y:.0%}"
     bars = [s for s in specs if s["layout"]["title"]["text"] == "Observed at-risk rate by profile"][0]
     assert bars["data"][0]["marker"]["color"] == "#8C8C8C"
+
+
+def _frame(at, column):
+    return [df for df in at.dataframe if column in df.value.columns][0]
+
+
+def test_funnel_table_renders_a_dash_and_right_aligned_counts(tables_env):
+    import json
+
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception
+    frame = _frame(at, "Share of previous stage")
+    shown = frame.value.reset_index(drop=True)
+    assert shown.loc[0, "Stage"] == "Registered" and shown.loc[0, "Share of previous stage"] == "–"
+    assert shown.loc[0, "Share of registered"] == "100%"
+    assert not shown.isin(["None", "nan", "NaN"]).any().any() and shown.notna().all().all()
+    assert all("," in v or len(v) <= 3 for v in shown["Students"])
+    config = json.loads(frame.proto.columns)
+    assert config["Students"]["alignment"] == "right"
+
+
+def test_capacity_can_apply_to_each_module(tables_env, matrix):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert at.radio(key="capacity_scope").value == "the whole cohort"
+    at.radio(key="capacity_scope").set_value("each module separately").run()
+    assert not at.exception
+    by_module = _frame(at, "Flagged share").value.set_index("Module")
+    val = matrix[matrix["code_presentation"] == "2014J"]
+    for module, g in val.groupby("code_module"):
+        assert by_module.loc[module, "Flagged"] == f"{round(0.2 * len(g)):,}"
+    assert "within each module" in _texts(at)
+
+
+def test_calibration_chart_replaces_the_histogram(tables_env, matrix, small_final):
+    from sar.service import views
+
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    assert not at.exception
+    spec = [s for s in _chart_specs(at) if s["layout"]["title"]["text"].startswith("Observed at-risk rate against")][0]
+    expected = views.calibration_bins(views.score_presentation(small_final[0], matrix, "2014J"))
+    points = spec["data"][1]
+    assert points["text"] == [f"{n:,}" for n in expected["students"]]
+    assert points["y"] == pytest.approx(list(expected["observed_rate"]))
+    assert spec["data"][0]["x"] == [0, 1] and spec["data"][0]["y"] == [0, 1]
+    text = _texts(at)
+    assert "limited number of distinct values because isotonic" in text and "Band cutoffs: Medium from" in text
+    assert not [s for s in _chart_specs(at) if any(t.get("type") == "histogram" for t in s["data"])]

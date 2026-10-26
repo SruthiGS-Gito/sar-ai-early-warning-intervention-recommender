@@ -21,7 +21,7 @@ import pandas as pd
 
 from sar.config import RISK_BANDS
 from sar.data.split import TEST_PRESENTATION
-from sar.models.final import predict
+from sar.models.final import predict, reliability
 
 KEY = ["code_module", "code_presentation", "id_student"]
 MIN_CELL = 20
@@ -105,12 +105,23 @@ def flag_outcome(scored: pd.DataFrame, flagged) -> FlagOutcome:
     return FlagOutcome(len(scored), int(flagged.sum()), int(y.sum()), int((flagged & y).sum()))
 
 
-def flag_capacity(scored: pd.DataFrame, share: float) -> Flagging:
-    """Flag the top `share` of this cohort by risk (rank 1 first), for any share from 0 to 1."""
+def flag_capacity(scored: pd.DataFrame, share: float, per_module: bool = False) -> Flagging:
+    """Flag the top `share` of this cohort by risk (rank 1 first), for any share from 0 to 1.
+
+    With `per_module`, the share applies inside every module separately: each module's students are
+    ordered by risk_order (calibrated score, then raw score, then row order) and its top share is flagged.
+    """
     if not 0 <= share <= 1:
         raise ValueError(f"Capacity share must be between 0 and 1, not {share}")
-    k = int(round(share * len(scored)))
-    return Flagging("capacity", f"Top {share:.0%} of students by risk ({k:,} students)", scored["rank"] <= k)
+    if not per_module:
+        k = int(round(share * len(scored)))
+        return Flagging("capacity", f"Top {share:.0%} of students by risk ({k:,} students)", scored["rank"] <= k)
+    flagged = pd.Series(False, index=scored.index)
+    for _, g in scored.groupby("code_module"):
+        k = int(round(share * len(g)))
+        flagged[g.index[risk_order(g["score"], g["raw_score"])[:k]]] = True
+    return Flagging("capacity", f"Top {share:.0%} of students by risk within each module "
+                                f"({int(flagged.sum()):,} students)", flagged)
 
 
 def flag_wide_net(scored: pd.DataFrame, cutoffs: dict) -> Flagging:
@@ -128,12 +139,13 @@ def flagged_by_band(scored: pd.DataFrame) -> pd.Series:
 def band_evidence(scored: pd.DataFrame, min_cell: int = MIN_CELL) -> pd.DataFrame:
     """Observed at-risk rate and lift inside each risk band, for the cohort ("All modules") and per module.
 
-    Lift is the band's at-risk rate divided by the cohort's overall at-risk rate. Cells with fewer
-    than `min_cell` students keep their count but have no rate or lift.
+    Lift is the band's at-risk rate divided by the overall at-risk rate of the same group: the module's
+    own rate for a module row, the cohort's rate for the "All modules" row. Cells with fewer than
+    `min_cell` students keep their count but have no rate or lift.
     """
-    base = scored["at_risk"].mean()
     rows = []
     for module, g in [("All modules", scored), *scored.groupby("code_module")]:
+        base = g["at_risk"].mean()
         for band in reversed(BAND_NAMES):
             cell = g.loc[g["band"] == band, "at_risk"]
             rate = cell.mean() if len(cell) >= min_cell else np.nan
@@ -163,6 +175,16 @@ def batch_summary(scored: pd.DataFrame, outcomes: bool = False) -> pd.DataFrame:
     out[ints] = out[ints].astype(int)
     out.index.name = "Module"
     return out
+
+
+def calibration_bins(scored: pd.DataFrame, bins: int = 10) -> pd.DataFrame:
+    """Observed at-risk rate against mean calibrated score in equal-width score bins (empty bins dropped),
+    computed as in the reliability table of metrics.json."""
+    rel = reliability(scored["at_risk"].to_numpy(), scored["score"].to_numpy(), bins)
+    rows = [r for r in rel["reliability"] if r["count"]]
+    return pd.DataFrame({"bin": [r["bin"] for r in rows], "students": [r["count"] for r in rows],
+                         "mean_score": [r["mean_predicted"] for r in rows],
+                         "observed_rate": [r["observed_rate"] for r in rows]})
 
 
 def risk_band_table(scored: pd.DataFrame, matrix: pd.DataFrame) -> pd.DataFrame:

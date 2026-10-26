@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import plotly.graph_objects as go  # noqa: E402
 import streamlit as st  # noqa: E402
@@ -50,6 +51,7 @@ from sar.service.views import (  # noqa: E402
     MIN_CELL,
     band_evidence,
     batch_summary,
+    calibration_bins,
     flag_capacity,
     flag_outcome,
     flag_wide_net,
@@ -74,8 +76,15 @@ BAND_COLOURS = {"Low": ON_TRACK, "Medium": NEUTRAL, "High": AT_RISK}
 FLAG_VS_BAND = ("High is a fixed calibrated-score cutoff set when the model was built; capacity flags the "
                 "highest-risk share of this cohort, which can include Medium students when the share exceeds the "
                 "High band's share.")
-EVIDENCE_NOTE = ("Observed at-risk rate inside each band, and its lift: the band's rate divided by the cohort's "
-                 "overall at-risk rate. Bands with fewer than {n} students are shown as n < {n}.")
+EVIDENCE_NOTE = ("Observed at-risk rate inside each band, and its lift: the band's rate divided by the overall "
+                 "at-risk rate of the same row, that is the module's own rate for a module and the cohort's rate for "
+                 "All modules. Bands with fewer than {n} students are shown as n < {n}.")
+SCOPE_COHORT, SCOPE_MODULE = "the whole cohort", "each module separately"
+CALIBRATION_NOTE = ("Each point is a bin of {val} students by calibrated score (width 0.1): its mean calibrated score "
+                    "against the share who went on to fail or withdraw, with the number of students beside it. Points "
+                    "on the diagonal are well calibrated. Band cutoffs: Medium from {medium:.2f}, High from "
+                    "{high:.2f}. Calibrated scores take a limited number of distinct values because isotonic "
+                    "calibration maps ranges of the forest's score to the same value.")
 DEPT_NOTE = ("One row per module in the chosen presentation: students in the Day 30 population, the observed "
              "at-risk rate (final outcome Fail or Withdrawn) and the share of students in each risk band of the "
              "final model. Groups under {n} students are shown without figures.")
@@ -216,19 +225,23 @@ SMALL = f"n < {MIN_CELL}"
 DASH = "\u2013"
 
 
-def small_cells(table: pd.DataFrame, view: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
-    """`view` with the figures of suppressed groups replaced by the text "n < MIN_CELL"."""
-    hidden = table["suppressed"].astype(bool).to_numpy()
-    view = view.copy()
-    for c in columns:
-        view[c] = view[c].astype(object)
-        view.loc[hidden, c] = SMALL
-    return view
+def text_cells(df: pd.DataFrame, formats: dict, hidden=None, missing: str = DASH) -> pd.DataFrame:
+    """`df` with each column in `formats` turned into display text: values formatted with their pattern,
+    missing values as a dash, and, where `hidden` is True, the text "n < MIN_CELL"."""
+    out = df.copy()
+    hidden = np.zeros(len(df), bool) if hidden is None else np.asarray(hidden, dtype=bool)
+    for c, pattern in formats.items():
+        out[c] = [SMALL if h else v if isinstance(v, str) else missing if pd.isna(v) else pattern.format(v)
+                  for v, h in zip(df[c], hidden)]
+    return out
 
 
-def fmt(pattern: str):
-    """Formatter for Styler.format that leaves text (such as "n < 20") as it is and shows missing values as a dash."""
-    return lambda v: v if isinstance(v, str) else DASH if pd.isna(v) else pattern.format(v)
+def show_table(df: pd.DataFrame, formats: dict, hidden=None, missing: str = DASH) -> pd.DataFrame:
+    """Show `df` as formatted text, with the formatted (numeric) columns right-aligned. Returns what is shown."""
+    out = text_cells(df, formats, hidden, missing)
+    st.dataframe(out, hide_index=True,
+                 column_config={c: st.column_config.TextColumn(c, alignment="right") for c in formats})
+    return out
 
 
 def shown_rows(table: pd.DataFrame) -> pd.DataFrame:
@@ -327,21 +340,21 @@ with dashboard:
                      "students": "Students", "at_risk_rate": "At-risk rate",
                      **{s: f"{b} band" for s, b in bands.items()}})
         pcts = [c for c in view.columns if c.endswith(("rate", "band"))]
-        view = small_cells(part, view, pcts)
-        st.dataframe(view.style.format({"Students": fmt("{:,}"), **{c: fmt("{:.0%}") for c in pcts}}),
-                     hide_index=True)
+        small = part["suppressed"].astype(bool).to_numpy()
+        view = view.astype({c: object for c in pcts})
+        view.loc[small, pcts] = SMALL
+        show_table(view, {"Students": "{:,}", **dict.fromkeys(pcts, "{:.0%}")})
+        if part["suppressed"].astype(bool).any():
+            st.caption(f"Modules with fewer than {MIN_CELL} students are shown without figures.")
         st.markdown("##### Observed at-risk rate inside each band")
         st.caption(EVIDENCE_NOTE.format(n=MIN_CELL))
-        base = part.loc[part["code_module"] == ALL_MODULES, "at_risk_rate"]
-        base = float(base.iloc[0]) if len(base) else float("nan")
         evidence = part[["code_module"]].rename(columns={"code_module": "Module"})
         for r, b in reversed(list(zip(BAND_RATES, BAND_SHARES))):
             name = bands[b]
             evidence[f"{name}: at-risk rate"] = part[r].to_numpy()
-            evidence[f"{name}: lift"] = (part[r] / base).to_numpy()
-        st.dataframe(evidence.style.format(
-            {c: (fmt("{:.0%}") if c.endswith("rate") else fmt("{:.2f}")) for c in evidence.columns if ": " in c},
-            na_rep=SMALL), hide_index=True)
+            evidence[f"{name}: lift"] = (part[r] / part["at_risk_rate"]).to_numpy()
+        show_table(evidence, {c: ("{:.0%}" if c.endswith("rate") else "{:.2f}") for c in evidence.columns if ": " in c},
+                   missing=SMALL)
         modules = shown_rows(part)
         fig = go.Figure([go.Bar(name=b, x=modules["code_module"], y=modules[s], marker_color=BAND_COLOURS[b],
                                 texttemplate="%{y:.0%}", textposition="inside")
@@ -363,9 +376,8 @@ with dashboard:
         view = part[["profile", "students", "share_of_scope", "at_risk_rate", *means]].rename(
             columns={"profile": "Profile", "students": "Students", "share_of_scope": "Share",
                      "at_risk_rate": "At-risk rate", **{m: h for m, (h, _) in means.items()}})
-        view = small_cells(part, view, ["At-risk rate", *(h for h, _ in means.values())])
-        st.dataframe(view.style.format({"Students": fmt("{:,}"), "Share": fmt("{:.0%}"), "At-risk rate": fmt("{:.0%}"),
-                                        **{h: fmt(f) for h, f in means.values()}}), hide_index=True)
+        show_table(view, {"Students": "{:,}", "Share": "{:.0%}", "At-risk rate": "{:.0%}",
+                          **{h: f for h, f in means.values()}})
         shown = shown_rows(part)
         with st.expander("What each profile means"):
             for _, row in shown.iterrows():
@@ -414,8 +426,7 @@ with funnel:
             "not applicable" if not a else SMALL if pd.isna(n) else f"{int(n):,}"
             for n, a in zip(part["students"], part["applicable"].astype(bool))]
         view.loc[~part["applicable"].astype(bool).to_numpy(), "Share of previous stage"] = float("nan")
-        st.dataframe(view.style.format({"Share of registered": fmt("{:.0%}"),
-                                        "Share of previous stage": fmt("{:.0%}")}), hide_index=True)
+        show_table(view, {"Students": "{}", "Share of registered": "{:.0%}", "Share of previous stage": "{:.0%}"})
 
 with batch:
     st.subheader("Batch Report")
@@ -431,7 +442,9 @@ with batch:
         if rule == CAPACITY:
             pct = st.slider("Contact capacity (share of this cohort)", min_value=1, max_value=50, value=20, step=1,
                             format="%d%%", key="capacity")
-            flagging = flag_capacity(scored, pct / 100)
+            scope = st.radio("Capacity applies to", [SCOPE_COHORT, SCOPE_MODULE], horizontal=True,
+                             key="capacity_scope")
+            flagging = flag_capacity(scored, pct / 100, per_module=scope == SCOPE_MODULE)
         else:
             flagging = flag_wide_net(scored, cutoffs)
         scored = scored.assign(flagged=flagging.flagged)
@@ -453,11 +466,10 @@ with batch:
                    + FLAG_VS_BAND)
 
         st.markdown("#### By module")
-        summary = batch_summary(scored, outcomes=not in_sample).assign(Scores=score_source(pres))
-        st.dataframe(summary.style.format({"Students": "{:,}", "Flagged": "{:,}", "Flagged share": "{:.0%}",
-                                           **{b: "{:,}" for b in by_band.index},
-                                           **{c: "{:.0%}" for c in ["At-risk rate", "Recall", "Precision"]
-                                              if c in summary.columns}}, na_rep="\u2013"))
+        summary = batch_summary(scored, outcomes=not in_sample).assign(Scores=score_source(pres)).reset_index()
+        show_table(summary, {"Students": "{:,}", "Flagged": "{:,}", "Flagged share": "{:.0%}",
+                             **{b: "{:,}" for b in by_band.index},
+                             **{c: "{:.0%}" for c in ["At-risk rate", "Recall", "Precision"] if c in summary.columns}})
         if in_sample:
             st.caption(f"Per-module at-risk rate, recall and precision are shown for {TEST_PRESENTATION} only.")
         else:
@@ -478,22 +490,24 @@ with batch:
                                   for col, lab in [("students", "students"), ("at_risk_rate", "at-risk rate"),
                                                    ("lift", "lift")]}).loc[order]
             table.index.name = "Module"
-            st.dataframe(table.style.format(
-                {c: "{:,.0f}" if c.endswith("students") else "{:.0%}" if c.endswith("rate") else "{:.2f}"
-                 for c in table.columns}, na_rep=f"n < {MIN_CELL}"))
+            show_table(table.reset_index(), {c: "{:,.0f}" if c.endswith("students") else "{:.0%}" if c.endswith("rate")
+                                             else "{:.2f}" for c in table.columns}, missing=SMALL)
 
-        st.markdown("#### How calibrated risk spreads across the bands")
-        hist = go.Figure()
-        for is_flagged, colour, name in [(False, ON_TRACK, "Not flagged"), (True, AT_RISK, "Flagged")]:
-            hist.add_trace(go.Histogram(x=scored.loc[scored["flagged"] == is_flagged, "score"], name=name,
-                                        marker_color=colour, xbins={"start": 0, "end": 1, "size": 0.025}))
-        for band, edge in edges.items():
-            if edge > 0:
-                hist.add_vline(x=edge, line_dash="dash", annotation_text=f"{band} from {edge:.2f}")
-        hist.update_layout(barmode="overlay", xaxis_title="Calibrated risk score", yaxis_title="Students",
-                           margin={"t": 50}, height=380, legend={"orientation": "h"}, separators=".,",
-                           title=f"Calibrated risk scores of {pres} students, with the band cutoffs")
-        st.plotly_chart(hist, width="stretch")
+        st.markdown("#### Calibration on the validation presentation")
+        cal = calibration_bins(get_scores(processed, models, TEST_PRESENTATION, fitted, matrix))
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Perfect calibration",
+                                 line={"color": NEUTRAL, "dash": "dash"}))
+        fig.add_trace(go.Scatter(x=cal["mean_score"].tolist(), y=cal["observed_rate"].tolist(),
+                                 mode="markers+lines+text",
+                                 name="Observed", marker={"color": ON_TRACK, "size": 9}, line={"color": ON_TRACK},
+                                 text=[f"{n:,}" for n in cal["students"]], textposition="top left"))
+        fig.update_layout(xaxis_title="Mean calibrated risk score", yaxis_title="Observed at-risk rate",
+                          xaxis_range=[0, 1], yaxis_range=[0, 1], xaxis_tickformat=".0%", yaxis_tickformat=".0%",
+                          height=420, margin={"t": 50}, legend={"orientation": "h"},
+                          title=f"Observed at-risk rate against calibrated score, {TEST_PRESENTATION}")
+        st.plotly_chart(fig, width="stretch")
+        st.caption(CALIBRATION_NOTE.format(val=TEST_PRESENTATION, medium=edges["Medium"], high=edges["High"]))
 
         with st.expander("Flagged students (individual rows; for staff follow-up only)"):
             flagged = scored[scored["flagged"]].sort_values("rank")[KEY + ["band", "rank"]]

@@ -239,3 +239,40 @@ def test_risk_bands_hide_small_cells(small_final):
 
 def test_training_presentation_flag():
     assert views.is_training_presentation("2013J") and not views.is_training_presentation("2014J")
+
+
+def test_capacity_per_module_flags_the_top_share_inside_each_module(matrix, small_final):
+    fitted, _ = small_final
+    scored = views.score_presentation(fitted, matrix, "2014J")
+    f = views.flag_capacity(scored, 0.2, per_module=True).flagged
+    for _, g in scored.groupby("code_module"):
+        k = int(round(0.2 * len(g)))
+        assert f[g.index].sum() == k
+        top = set(g.index[views.risk_order(g["score"], g["raw_score"])[:k]])
+        assert set(g.index[f[g.index]]) == top
+
+
+def test_band_evidence_lift_uses_each_rows_own_rate(matrix, small_final):
+    fitted, _ = small_final
+    scored = views.score_presentation(fitted, matrix, "2014J")
+    ev = views.band_evidence(scored, min_cell=1)
+    for module, g in [*scored.groupby("code_module"), ("All modules", scored)]:
+        base = g["at_risk"].mean()
+        rows = ev[ev["code_module"] == module].set_index("band")
+        for band, row in rows.iterrows():
+            cell = g.loc[g["band"] == band, "at_risk"]
+            if len(cell):
+                assert row["lift"] == pytest.approx(cell.mean() / base)
+
+
+def test_calibration_bins_follow_the_reliability_table(matrix, small_final):
+    from sar.models.final import reliability
+
+    fitted, _ = small_final
+    scored = views.score_presentation(fitted, matrix, "2014J")
+    cal = views.calibration_bins(scored)
+    rel = [r for r in reliability(scored["at_risk"].to_numpy(), scored["score"].to_numpy())["reliability"]
+           if r["count"]]
+    assert cal["students"].sum() == len(scored) and list(cal["students"]) == [r["count"] for r in rel]
+    assert np.allclose(cal["observed_rate"], [r["observed_rate"] for r in rel])
+    assert np.allclose(cal["mean_score"], [r["mean_predicted"] for r in rel])
