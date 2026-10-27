@@ -80,7 +80,7 @@ def test_status_cards_describe_each_team_table(empty_env):
         assert f"- {spec.title}: not loaded" in about
         assert spec.file not in about and not any(f"`{c}`" in about for c in spec.columns)
     assert main.count("Not available yet. Details are in the About tab") == 3
-    assert "Risk bands and observed outcomes for each module" in main
+    assert "### Risk bands by module" in main
 
 
 def test_main_tabs_hold_no_developer_text_and_about_holds_the_details(tables_env):
@@ -251,21 +251,37 @@ def tables_env(synthetic_env, matrix, small_final):
     return synthetic_env, table
 
 
-def test_team_tables_are_shown_with_charts(tables_env):
+def _outside_expanders(node, kind):
+    """Elements of type `kind` that are not inside an expander."""
+    for child in getattr(node, "children", {}).values():
+        if child.type == kind:
+            yield child
+        elif child.type != "expander":
+            yield from _outside_expanders(child, kind)
+
+
+def test_cohort_insights_shows_cards_charts_and_collapsed_tables(tables_env):
     _, prof = tables_env
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
-    text = _texts(at)
-    assert "not available yet" not in text and "**Status:**" not in text
-    assert "#### Student profiles" in text
-    assert "#### Department risk" not in text and "#### Retention funnel" in text      # funnel shares a tab now
-    assert "Retrospective, descriptive view" in text and "not model inputs" in text
-    assert "Counts under 20 are hidden" in text and "{" not in text
+    tab = _tab(at, "Cohort insights")
+    text = _texts(tab)
+    assert "not available yet" not in text.lower()
+    for heading in ["### Risk bands by module", "### Student profiles", "### Retention funnel"]:
+        assert heading in text
+    cards = [m for m in tab.metric]
+    assert [m.label for m in cards] == ["Cohort at-risk rate", "Share in the High band", "Share in the Low band"]
+    assert all(m.proto.show_border and m.help for m in cards)
+    assert not list(_outside_expanders(tab, "dataframe"))                   # tables only in collapsed sections
+    assert [e.label for e in tab.expander] == ["What each profile means", "View data tables", "Model reliability",
+                                               "Optional 3D view"]
+    assert "Retrospective: the last two stages use final outcomes, which are not model inputs." in text
     validation = prof[prof["scope"] == "validation"]
     for _, row in validation.iterrows():
         assert f"**{row['profile']}**: {row['description']}" in text
-    assert len(at.dataframe) >= 3
-    assert all(c in text for c in ["Groups under 20 students", "without background characteristics"])
+    about = _about_text(at)
+    assert "Counts under 20 are hidden" in about and "Groups under 20 students" in about
+    assert "without background characteristics" in about and "{" not in text
 
 
 def test_team_table_selectors_and_training_note(tables_env):
@@ -325,7 +341,7 @@ def test_band_views_default_to_the_validation_presentation(tables_env):
     assert _texts(at.sidebar).count("Training presentations have in-sample scores") == 1
     dept = [df.value for df in at.dataframe if "High band" in df.value.columns][0]
     assert "Presentation" not in dept.columns and "Scores" not in dept.columns
-    assert "All figures below are for 2014J; scores are validation (2014J)." in text
+    assert "**Risk bands by module, 2014J** (validation (2014J) scores)" in text
 
 
 def test_training_presentations_appear_only_after_opting_in(tables_env):
@@ -390,8 +406,13 @@ def test_tables_and_charts_are_formatted_for_reading(tables_env):
     assert all(titles), titles
     stacked = [s for s in specs if s["layout"]["title"]["text"].startswith("Share of students in each risk band")][0]
     assert "All modules" in stacked["data"][0]["x"] and stacked["data"][0]["texttemplate"] == "%{y:.0%}"
-    bars = [s for s in specs if s["layout"]["title"]["text"] == "Observed at-risk rate by profile"][0]
+    bars = [s for s in specs if s["layout"]["title"]["text"] == "Observed at-risk rate by profile, 2014J"][0]
     assert bars["data"][0]["marker"]["color"] == "#8C8C8C"
+    validation = prof[prof["scope"] == "validation"].sort_values("at_risk_rate", ascending=False)
+    assert bars["data"][0]["text"] == [f"{r:.0%} at risk<br>{sh:.0%} of students"
+                                       for r, sh in zip(validation["at_risk_rate"], validation["share_of_scope"])]
+    heights = {s["layout"].get("height") for s in specs}
+    assert heights == {380}, heights
 
 
 def _frame(at, column):

@@ -98,6 +98,7 @@ SNAPSHOT = {"total_clicks": "Total clicks", "active_days": "Active days",
             "trailing_inactive_days": f"Days inactive just before Day {CUTOFF_DAY}",
             "n_submitted": "Assessments submitted", "n_missed": "Assessments missed"}
 LOWER_IS_BETTER = {"trailing_inactive_days", "n_missed"}
+CHART_HEIGHT = 380
 MAX_LIVE_REASONS = 50
 OPEN_FOR_DETAILS = "Open the student to see"
 WHY_LEGEND = "Red bars raise the risk score and blue bars lower it; a longer bar means a larger effect."
@@ -226,17 +227,6 @@ def status_card(status: TableStatus) -> None:
         st.write(status.spec.description)
         (st.info if status.state == "missing" else st.warning)(
             f"{CARD_MESSAGES[status.state]} Details are in the About tab, under Data details.")
-
-
-def team_table(name: str, processed_dir: str, heading: bool = True) -> pd.DataFrame | None:
-    """The team table when it can be shown (after its title); otherwise its status card."""
-    status = get_table(name, processed_dir)
-    if not status.ok:
-        status_card(status)
-        return None
-    if heading:
-        st.markdown(f"#### {status.spec.title}")
-    return status.table
 
 
 PROFILE_HEADERS = {"mean_total_clicks": ("Mean clicks", "{:,.0f}"),
@@ -383,7 +373,7 @@ def why_chart(expl):
     fig = go.Figure(go.Bar(x=top["contribution"].tolist(), y=top["phrase"].tolist(), orientation="h",
                            marker_color=[AT_RISK if v > 0 else ON_TRACK for v in top["contribution"]],
                            hovertemplate="%{y}: %{x:+.3f}<extra></extra>"))
-    fig.update_layout(title="What moves this score", height=360, margin={"t": 50, "l": 10, "r": 10},
+    fig.update_layout(title="What moves this score", height=CHART_HEIGHT, margin={"t": 50, "l": 10, "r": 10},
                       xaxis_title="Change in risk score", showlegend=False)
     return fig
 
@@ -470,105 +460,215 @@ with student:
         else:
             student_view(pres, module, sid)
 
-with cohort:
-    st.subheader("Cohort insights")
-    st.write("Risk bands and observed outcomes for each module, followed by the Day 30 engagement profiles of "
-             "the students.")
-    dept = team_table("department_risk", processed, heading=False)
-    if dept is not None:
-        st.caption(DEPT_NOTE.format(n=MIN_CELL))
-        pres = ctl.presentation if ctl else TEST_PRESENTATION
-        part = dept[dept["code_presentation"] == pres]
-        if (part["score_source"] == "training").any():
-            st.info(DEPT_TRAINING_NOTE)
-        bands = {s: s.removeprefix("share_").capitalize() for s in BAND_SHARES}
-        st.caption(f"All figures below are for {pres}; scores are {SCORE_SOURCE[part['score_source'].iloc[0]]}.")
-        view = part[["code_module", "students", "at_risk_rate", *reversed(BAND_SHARES)]].rename(
-            columns={"code_module": "Module", "students": "Students", "at_risk_rate": "At-risk rate",
-                     **{s: f"{b} band" for s, b in bands.items()}})
-        pcts = [c for c in view.columns if c.endswith(("rate", "band"))]
-        small = part["suppressed"].astype(bool).to_numpy()
-        view = view.astype({c: object for c in pcts})
-        view.loc[small, pcts] = SMALL
-        show_table(view, {"Students": "{:,}", **dict.fromkeys(pcts, "{:.0%}")})
-        if part["suppressed"].astype(bool).any():
-            st.caption(f"Modules with fewer than {MIN_CELL} students are shown without figures.")
-        st.markdown("##### Observed at-risk rate inside each band")
-        st.caption(EVIDENCE_NOTE.format(n=MIN_CELL))
-        evidence = part[["code_module"]].rename(columns={"code_module": "Module"})
-        for r, b in reversed(list(zip(BAND_RATES, BAND_SHARES))):
-            name = bands[b]
-            evidence[f"{name}: at-risk rate"] = part[r].to_numpy()
-            evidence[f"{name}: lift"] = (part[r] / part["at_risk_rate"]).to_numpy()
-        show_table(evidence, {c: ("{:.0%}" if c.endswith("rate") else "{:.2f}") for c in evidence.columns if ": " in c},
-                   missing=SMALL)
-        modules = shown_rows(part)
-        fig = go.Figure([go.Bar(name=b, x=modules["code_module"], y=modules[s], marker_color=BAND_COLOURS[b],
-                                texttemplate="%{y:.0%}", textposition="inside")
-                         for s, b in bands.items()])
-        fig.update_layout(barmode="stack", yaxis_title="Share of students", yaxis_tickformat=".0%", height=360,
-                          margin={"t": 50}, legend={"orientation": "h"}, xaxis_title="Module",
-                          title=f"Share of students in each risk band by module, {pres}")
-        st.plotly_chart(fig, width="stretch")
+def cohort_cards(pres: str, module: str, dept: pd.DataFrame | None) -> None:
+    """Cohort at-risk rate and the shares in the High and Low bands, for the sidebar selection."""
+    where = ALL_MODULES if module == ALL_MODULES else module
+    rate = high = low = None
+    if core_ok:
+        scored = get_scores(processed, models, pres, fitted, matrix)
+        part = scored if where == ALL_MODULES else scored[scored["code_module"] == where]
+        if len(part) >= MIN_CELL:
+            rate, high, low = part["at_risk"].mean(), (part["band"] == "High").mean(), (part["band"] == "Low").mean()
+    elif dept is not None:
+        row = dept[(dept["code_presentation"] == pres) & (dept["code_module"] == where)]
+        if len(row) and not bool(row["suppressed"].iloc[0]):
+            rate, high, low = row[["at_risk_rate", "share_high", "share_low"]].iloc[0]
+    cards = st.columns(3)
+    label = "all modules" if where == ALL_MODULES else f"module {where}"
+    cards[0].metric("Cohort at-risk rate", DASH if rate is None else f"{rate:.0%}", border=True,
+                    help=f"Share of {pres} students in {label} whose final outcome was Fail or Withdrawn.")
+    cards[1].metric("Share in the High band", DASH if high is None else f"{high:.0%}", border=True,
+                    help="Students at or above the top-20% cutoff set on training data.")
+    cards[2].metric("Share in the Low band", DASH if low is None else f"{low:.0%}", border=True,
+                    help="Students below the wide-net cutoff set on training data.")
 
-    prof = team_table("student_profiles", processed)
-    if prof is not None:
-        scope = "training" if ctl and ctl.in_sample and "training" in set(prof["scope"]) else "validation"
-        st.caption(PROFILE_NOTE.format(val=TEST_PRESENTATION) + (
-            " Shown for the training presentations together, the rows the clusters were fitted on."
-            if scope == "training" else ""))
-        part = prof[prof["scope"] == scope].sort_values("at_risk_rate", ascending=False, na_position="last")
-        means = {f"mean_{f}": PROFILE_HEADERS[f"mean_{f}"] for f in PROFILE_FEATURES}
-        view = part[["profile", "students", "share_of_scope", "at_risk_rate", *means]].rename(
-            columns={"profile": "Profile", "students": "Students", "share_of_scope": "Share",
-                     "at_risk_rate": "At-risk rate", **{m: h for m, (h, _) in means.items()}})
-        show_table(view, {"Students": "{:,}", "Share": "{:.0%}", "At-risk rate": "{:.0%}",
-                          **{h: f for h, f in means.values()}})
-        shown = shown_rows(part)
+
+def band_chart(part: pd.DataFrame, pres: str):
+    bands = {s: s.removeprefix("share_").capitalize() for s in BAND_SHARES}
+    modules = shown_rows(part)
+    fig = go.Figure([go.Bar(name=b, x=modules["code_module"].tolist(), y=modules[s].tolist(),
+                            marker_color=BAND_COLOURS[b], texttemplate="%{y:.0%}", textposition="inside")
+                     for s, b in bands.items()])
+    fig.update_layout(barmode="stack", yaxis_title="Share of students", yaxis_tickformat=".0%", height=CHART_HEIGHT,
+                      margin={"t": 50}, legend={"orientation": "h"}, xaxis_title="Module",
+                      title=f"Share of students in each risk band by module, {pres}")
+    return fig
+
+
+def profile_chart(shown: pd.DataFrame, scope_label: str):
+    fig = go.Figure(go.Bar(x=shown["profile"].tolist(), y=shown["at_risk_rate"].tolist(), marker_color=NEUTRAL,
+                           text=[f"{r:.0%} at risk<br>{sh:.0%} of students"
+                                 for r, sh in zip(shown["at_risk_rate"], shown["share_of_scope"])],
+                           textposition="outside"))
+    fig.update_layout(yaxis_title="Observed at-risk rate", yaxis_tickformat=".0%", yaxis_range=[0, 1.1],
+                      height=CHART_HEIGHT, margin={"t": 50}, title=f"Observed at-risk rate by profile, {scope_label}")
+    return fig
+
+
+def funnel_view(fun: pd.DataFrame, pres: str, module: str):
+    """The funnel chart, its one caption line, and its table for one presentation and module."""
+    in_pres = fun[fun["code_presentation"] == pres]
+    part = in_pres[in_pres["code_module"] == module].sort_values("stage_order")
+    part = part.assign(stage=part["stage"].where(part["applicable"].astype(bool),
+                                                 part["stage"] + " (not applicable)"))
+    shown = shown_rows(part)
+    fig = go.Figure(go.Funnel(y=shown["stage"].tolist(), x=shown["students"].astype(float).tolist(),
+                              marker_color=ON_TRACK, texttemplate="%{value:,.0f} (%{percentInitial:.0%})"))
+    fig.update_layout(height=CHART_HEIGHT, margin={"t": 50}, separators=".,",
+                      title=f"Students at each stage (retrospective), {module}, {pres}")
+    notes = ["Retrospective: the last two stages use final outcomes, which are not model inputs."]
+    carried = in_pres[~in_pres["applicable"].astype(bool)]
+    if module != ALL_MODULES:
+        carried = carried[carried["code_module"] == module]
+    if len(carried):
+        n = carried["students"].dropna().astype(int).sum()
+        notes.append(f"{n:,} students in {', '.join(sorted(carried['code_module']))} are carried forward on the "
+                     "submission check, because no assessment was due by Day 30 there.")
+    if len(shown) < len(part):
+        notes.append(f"{len(part) - len(shown)} stages are hidden because of small counts.")
+    table = part[["stage", "students", "share_of_registered", "share_of_previous"]].rename(
+        columns={"stage": "Stage", "students": "Students", "share_of_registered": "Share of registered",
+                 "share_of_previous": "Share of previous stage"})
+    table["Students"] = ["not applicable" if not a else SMALL if pd.isna(n) else f"{int(n):,}"
+                         for n, a in zip(part["students"], part["applicable"].astype(bool))]
+    table.loc[~part["applicable"].astype(bool).to_numpy(), "Share of previous stage"] = float("nan")
+    return fig, " ".join(notes), table
+
+
+def evidence_table(scored: pd.DataFrame) -> pd.DataFrame:
+    ev = band_evidence(scored)
+    wide = ev.pivot(index="code_module", columns="band", values=["students", "at_risk_rate", "lift"])
+    order = [ALL_MODULES, *sorted(set(ev["code_module"]) - {ALL_MODULES})]
+    table = pd.DataFrame({f"{b}: {lab}": wide[(col, b)] for b in ["High", "Medium", "Low"]
+                          for col, lab in [("students", "students"), ("at_risk_rate", "at-risk rate"),
+                                           ("lift", "lift")]}).loc[order]
+    table.index.name = "Module"
+    return table.reset_index()
+
+
+def calibration_chart():
+    cal = calibration_bins(get_scores(processed, models, TEST_PRESENTATION, fitted, matrix))
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Perfect calibration",
+                             line={"color": NEUTRAL, "dash": "dash"}))
+    fig.add_trace(go.Scatter(x=cal["mean_score"].tolist(), y=cal["observed_rate"].tolist(), mode="markers+lines+text",
+                             name="Observed", marker={"color": ON_TRACK, "size": 9}, line={"color": ON_TRACK},
+                             text=[f"{n:,}" for n in cal["students"]], textposition="top left"))
+    fig.update_layout(xaxis_title="Mean calibrated risk score", yaxis_title="Observed at-risk rate",
+                      xaxis_range=[0, 1], yaxis_range=[0, 1], xaxis_tickformat=".0%", yaxis_tickformat=".0%",
+                      height=CHART_HEIGHT, margin={"t": 50}, legend={"orientation": "h"},
+                      title=f"Observed at-risk rate against calibrated score, {TEST_PRESENTATION}")
+    return fig
+
+
+with cohort:
+    pres = ctl.presentation if ctl else TEST_PRESENTATION
+    module = ctl.module if ctl else ALL_MODULES
+    in_sample = is_training_presentation(pres)
+    st.markdown("### Risk bands by module", help=DEPT_NOTE.format(n=MIN_CELL))
+    if in_sample:
+        st.warning(DEPT_TRAINING_NOTE)
+    dept_status = get_table("department_risk", processed)
+    dept = dept_status.table if dept_status.ok else None
+    cohort_cards(pres, module, dept)
+    dept_part = None
+    if dept is None:
+        status_card(dept_status)
+    else:
+        dept_part = dept[dept["code_presentation"] == pres]
+        st.plotly_chart(band_chart(dept_part, pres), width="stretch")
+        if dept_part["suppressed"].astype(bool).any():
+            st.caption(f"Modules with fewer than {MIN_CELL} students are not shown.")
+
+    prof_status = get_table("student_profiles", processed)
+    st.markdown("### Student profiles", help=PROFILE_NOTE.format(val=TEST_PRESENTATION))
+    prof_part = None
+    if not prof_status.ok:
+        status_card(prof_status)
+    else:
+        prof = prof_status.table
+        scope = "training" if in_sample and "training" in set(prof["scope"]) else "validation"
+        scope_label = "training presentations" if scope == "training" else TEST_PRESENTATION
+        prof_part = prof[prof["scope"] == scope].sort_values("at_risk_rate", ascending=False, na_position="last")
+        shown = shown_rows(prof_part)
+        st.plotly_chart(profile_chart(shown, scope_label), width="stretch")
+        if scope == "training":
+            st.caption("Shown for the training presentations together, the rows the clusters were fitted on.")
         with st.expander("What each profile means"):
             for _, row in shown.iterrows():
                 st.markdown(f"**{row['profile']}**: {row['description']}")
-        fig = go.Figure(go.Bar(x=shown["profile"], y=shown["at_risk_rate"], marker_color=NEUTRAL,
-                               text=[f"{r:.0%}" for r in shown["at_risk_rate"]], textposition="outside"))
-        fig.update_layout(yaxis_title="Observed at-risk rate", yaxis_tickformat=".0%", yaxis_range=[0, 1],
-                          height=340, margin={"t": 50}, title="Observed at-risk rate by profile")
-        st.plotly_chart(fig, width="stretch")
 
-    st.markdown("#### Retention funnel")
-    st.info(FUNNEL_NOTE)
-    fun = team_table("retention_funnel", processed, heading=False)
-    if fun is not None:
-        pres = ctl.presentation if ctl else TEST_PRESENTATION
-        in_pres = fun[fun["code_presentation"] == pres]
-        module = st.selectbox("Module", [ALL_MODULES, *sorted(set(in_pres["code_module"]) - {ALL_MODULES})],
-                              key="funnel_module")
-        part = in_pres[in_pres["code_module"] == module].sort_values("stage_order")
-        part = part.assign(stage=part["stage"].where(part["applicable"].astype(bool),
-                                                     part["stage"] + " (not applicable)"))
-        shown = shown_rows(part)
-        fig = go.Figure(go.Funnel(y=shown["stage"], x=shown["students"].astype(float), marker_color=ON_TRACK,
-                                  texttemplate="%{value:,.0f} (%{percentInitial:.0%})"))
-        fig.update_layout(height=380, margin={"t": 50}, separators=".,",
-                          title=f"Students at each stage, {module}, {pres}")
+    fun_status = get_table("retention_funnel", processed)
+    st.markdown("### Retention funnel", help=FUNNEL_NOTE)
+    funnel_table = None
+    if not fun_status.ok:
+        status_card(fun_status)
+    else:
+        fun = fun_status.table
+        options = [ALL_MODULES, *sorted(set(fun.loc[fun["code_presentation"] == pres, "code_module"]) - {ALL_MODULES})]
+        default = options.index(module) if module in options else 0
+        if "funnel_module" in st.session_state:
+            funnel_module = st.selectbox("Module", options, key="funnel_module")
+        else:
+            funnel_module = st.selectbox("Module", options, index=default, key="funnel_module")
+        fig, note, funnel_table = funnel_view(fun, pres, funnel_module)
         st.plotly_chart(fig, width="stretch")
-        if len(shown) < len(part):
-            st.caption(f"{len(part) - len(shown)} stages are hidden because of small counts.")
-        carried = in_pres[~in_pres["applicable"].astype(bool)]
-        if module != ALL_MODULES:
-            carried = carried[carried["code_module"] == module]
-        if len(carried):
-            n = carried["students"].dropna().astype(int).sum()
-            st.caption(f"{n:,} students in {', '.join(sorted(carried['code_module']))} are carried forward on the "
-                       "submission check: no assessment was due by Day 30 there, so the submission stage is not "
-                       "applicable and the later stages start from the previous stage's count.")
-        view = part[["stage", "students", "share_of_registered", "share_of_previous"]].rename(
-            columns={"stage": "Stage", "students": "Students", "share_of_registered": "Share of registered",
-                     "share_of_previous": "Share of previous stage"})
-        view["Students"] = [
-            "not applicable" if not a else SMALL if pd.isna(n) else f"{int(n):,}"
-            for n, a in zip(part["students"], part["applicable"].astype(bool))]
-        view.loc[~part["applicable"].astype(bool).to_numpy(), "Share of previous stage"] = float("nan")
-        show_table(view, {"Students": "{}", "Share of registered": "{:.0%}", "Share of previous stage": "{:.0%}"})
+        st.caption(note)
+
+    with st.expander("View data tables"):
+        if dept_part is not None:
+            st.markdown(f"**Risk bands by module, {pres}** ({score_source(pres)} scores)")
+            bands = {s: s.removeprefix("share_").capitalize() for s in BAND_SHARES}
+            view = dept_part[["code_module", "students", "at_risk_rate", *reversed(BAND_SHARES)]].rename(
+                columns={"code_module": "Module", "students": "Students", "at_risk_rate": "At-risk rate",
+                         **{s: f"{b} band" for s, b in bands.items()}})
+            pcts = [c for c in view.columns if c.endswith(("rate", "band"))]
+            view = view.astype({c: object for c in pcts})
+            view.loc[dept_part["suppressed"].astype(bool).to_numpy(), pcts] = SMALL
+            show_table(view, {"Students": "{:,}", **dict.fromkeys(pcts, "{:.0%}")})
+        if core_ok:
+            st.markdown("**Observed at-risk rate and lift inside each band**", help=EVIDENCE_NOTE.format(n=MIN_CELL))
+            if in_sample:
+                st.caption(f"Shown for the validation presentation ({TEST_PRESENTATION}) only; training scores are "
+                           "in-sample.")
+            else:
+                ev = evidence_table(get_scores(processed, models, pres, fitted, matrix))
+                show_table(ev, {c: "{:,.0f}" if c.endswith("students") else "{:.0%}" if c.endswith("rate")
+                                else "{:.2f}" for c in ev.columns if ": " in c}, missing=SMALL)
+        if prof_part is not None:
+            st.markdown("**Student profiles**")
+            means = {f"mean_{f}": PROFILE_HEADERS[f"mean_{f}"] for f in PROFILE_FEATURES}
+            view = prof_part[["profile", "students", "share_of_scope", "at_risk_rate", *means]].rename(
+                columns={"profile": "Profile", "students": "Students", "share_of_scope": "Share",
+                         "at_risk_rate": "At-risk rate", **{m: h for m, (h, _) in means.items()}})
+            show_table(view, {"Students": "{:,}", "Share": "{:.0%}", "At-risk rate": "{:.0%}",
+                              **{h: f for h, f in means.values()}})
+        if funnel_table is not None:
+            st.markdown(f"**Retention funnel, {funnel_module}**")
+            show_table(funnel_table, {"Students": "{}", "Share of registered": "{:.0%}",
+                                      "Share of previous stage": "{:.0%}"})
+
+    if core_ok:
+        with st.expander("Model reliability"):
+            st.plotly_chart(calibration_chart(), width="stretch")
+            st.caption(CALIBRATION_NOTE.format(val=TEST_PRESENTATION, medium=edges["Medium"], high=edges["High"]))
+
+        with st.expander("Optional 3D view"):
+            if st.toggle("Show average risk score by activity and score bands in 3D", key="show_3d"):
+                scored = get_scores(processed, models, pres, fitted, matrix)
+                bands = risk_band_table(scored, matrix)
+                if not bands["shown"].any():
+                    st.info(f"No band of {pres} students has at least {MIN_CELL} students, so there is nothing to "
+                            f"show in 3D. {hidden_bands(bands)} smaller bands are hidden.")
+                else:
+                    st.plotly_chart(band_figure(bands), width="stretch")
+                    st.caption(f"Each marker is a group of {pres} students with the same days active by Day "
+                               f"{CUTOFF_DAY} (one horizontal axis) and average assessment score by Day {CUTOFF_DAY} "
+                               "(the other horizontal axis). The vertical axis and the colour both show the group's "
+                               "average calibrated risk score; the marker size shows how many students it holds. "
+                               f"Groups with fewer than {MIN_CELL} students are not shown ({hidden_bands(bands)} "
+                               "groups hidden). Drag to rotate; hover for details.")
+
 
 def rule_caption(c: View) -> str:
     where = "all modules" if c.module == ALL_MODULES else f"module {c.module}"
@@ -651,59 +751,6 @@ with priority:
                 st.caption("Recall is the share of the module's at-risk students who are flagged; precision is the "
                            "share of the module's flagged students who are at risk.")
 
-with cohort:
-    if core_ok:
-        pres = ctl.presentation
-        in_sample = ctl.in_sample
-        scored = get_scores(processed, models, pres, fitted, matrix)
-        st.markdown("#### Observed at-risk rate inside each risk band")
-        if in_sample:
-            st.caption(f"Shown for the validation presentation ({TEST_PRESENTATION}) only; training scores are "
-                       "in-sample.")
-        else:
-            st.caption(EVIDENCE_NOTE.format(n=MIN_CELL))
-            ev = band_evidence(scored)
-            table = ev.pivot(index="code_module", columns="band", values=["students", "at_risk_rate", "lift"])
-            order = ["All modules", *sorted(set(ev["code_module"]) - {"All modules"})]
-            bands_hi = ["High", "Medium", "Low"]
-            table = pd.DataFrame({f"{b}: {lab}": table[(col, b)] for b in bands_hi
-                                  for col, lab in [("students", "students"), ("at_risk_rate", "at-risk rate"),
-                                                   ("lift", "lift")]}).loc[order]
-            table.index.name = "Module"
-            show_table(table.reset_index(), {c: "{:,.0f}" if c.endswith("students") else "{:.0%}" if c.endswith("rate")
-                                             else "{:.2f}" for c in table.columns}, missing=SMALL)
-
-        st.markdown("#### Calibration on the validation presentation")
-        cal = calibration_bins(get_scores(processed, models, TEST_PRESENTATION, fitted, matrix))
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Perfect calibration",
-                                 line={"color": NEUTRAL, "dash": "dash"}))
-        fig.add_trace(go.Scatter(x=cal["mean_score"].tolist(), y=cal["observed_rate"].tolist(),
-                                 mode="markers+lines+text",
-                                 name="Observed", marker={"color": ON_TRACK, "size": 9}, line={"color": ON_TRACK},
-                                 text=[f"{n:,}" for n in cal["students"]], textposition="top left"))
-        fig.update_layout(xaxis_title="Mean calibrated risk score", yaxis_title="Observed at-risk rate",
-                          xaxis_range=[0, 1], yaxis_range=[0, 1], xaxis_tickformat=".0%", yaxis_tickformat=".0%",
-                          height=420, margin={"t": 50}, legend={"orientation": "h"},
-                          title=f"Observed at-risk rate against calibrated score, {TEST_PRESENTATION}")
-        st.plotly_chart(fig, width="stretch")
-        st.caption(CALIBRATION_NOTE.format(val=TEST_PRESENTATION, medium=edges["Medium"], high=edges["High"]))
-
-        st.markdown("### Optional 3D view")
-        if st.toggle("Show average risk score by activity and score bands in 3D", key="show_3d"):
-            bands = risk_band_table(scored, matrix)
-            if not bands["shown"].any():
-                st.info(f"No band of {pres} students has at least {MIN_CELL} students, so there is nothing to "
-                        f"show in 3D. {hidden_bands(bands)} smaller bands are hidden.")
-            else:
-                st.plotly_chart(band_figure(bands), width="stretch")
-                st.caption(f"Each marker is a group of {pres} students with the same days active by Day "
-                           f"{CUTOFF_DAY} (one horizontal axis) and average assessment score by Day {CUTOFF_DAY} "
-                           "(the other horizontal axis). The vertical axis and the colour both show the group's "
-                           "average calibrated risk score; the marker size shows how many students it holds. "
-                           f"Groups with fewer than {MIN_CELL} students are not shown ({hidden_bands(bands)} groups "
-                           "hidden). Drag to rotate; hover for details.")
-
 def band_reading(pres: str) -> pd.DataFrame | None:
     """Observed at-risk rate and lift per band for a presentation: from the generated department table when it
     is loaded, otherwise computed from the model's scores. None when neither is available."""
@@ -723,12 +770,11 @@ def band_reading(pres: str) -> pd.DataFrame | None:
 
 
 with about:
-    st.subheader("About")
     if core_ok:
         val = ", ".join(metrics["validation_presentation"])
         train_pres = ", ".join(sorted(set(matrix["code_presentation"]) - {val}))
         v = metrics["final"]["validation"]
-        st.markdown("#### Model")
+        st.markdown("### Model")
         st.write(f"A Random Forest scores each student from {len(fitted['features'])} inputs known by Day "
                  f"{CUTOFF_DAY}: the module, VLE activity, assessment submissions and scores so far, registration "
                  "timing, study load and previous attempts. Protected characteristics (gender, region, highest "
@@ -739,7 +785,7 @@ with about:
         st.write("OULAD organises teaching into modules (courses), not departments; this application uses modules "
                  "wherever a department view is shown.")
 
-        st.markdown("#### Design and validation")
+        st.markdown("### Design and validation")
         overlap = overlap_report(matrix, val)
         st.markdown(
             f"- Prediction day: each student is scored from what is known by Day {CUTOFF_DAY} of the module; "
@@ -754,7 +800,7 @@ with about:
             f"- {val} is a validation presentation, not an untouched test set: it was used to compare model "
             "configurations, so its figures may be slightly optimistic.")
 
-        st.markdown("#### Risk bands")
+        st.markdown("### Risk bands")
         st.write("Each band starts at a calibrated-score cutoff chosen on training data.")
         show_table(pd.DataFrame({
             "Band": ["Low", "Medium", "High"],
@@ -765,7 +811,7 @@ with about:
                 "In the training data, 8 in 10 students who went on to fail or withdraw scored at least this.",
                 "In the training data, the highest-scoring 1 in 5 students scored at least this."]}), {})
 
-        st.markdown("#### How to read the bands")
+        st.markdown("### How to read the bands")
         reading = band_reading(val)
         if reading is not None:
             show_table(reading.rename(columns={"rate": f"Observed at-risk rate, {val}", "lift": "Lift"}),
@@ -774,14 +820,20 @@ with about:
         st.write("The Medium band's at-risk rate is close to the cohort average, so a Medium band is not a warning "
                  "on its own.")
 
-        st.markdown("#### Capacity flagging")
+        st.markdown("### Reading the cohort insights")
+        st.markdown(f"- Risk bands by module: {DEPT_NOTE.format(n=MIN_CELL)}\n"
+                    f"- Band evidence: {EVIDENCE_NOTE.format(n=MIN_CELL)}\n"
+                    f"- Student profiles: {PROFILE_NOTE.format(val=TEST_PRESENTATION)}\n"
+                    f"- Retention funnel: {FUNNEL_NOTE}")
+
+        st.markdown("### Capacity flagging")
         st.write("The priority list ranks the chosen cohort by calibrated risk (ties broken by the forest's raw score) "
                  "and flags the highest-risk share set on the slider, to match a team with a fixed number of "
                  "contacts; the share can apply to the whole cohort or to each module. Precision, recall and the "
                  "at-risk students caught or missed are computed from that cohort's observed outcomes. The wide-net "
                  "rule instead flags everyone above a fixed cutoff, so the share it flags varies between intakes.")
 
-        st.markdown("#### Limitations")
+        st.markdown("### Limitations")
         groups = metrics["final"].get("fairness_validation", {}).get("groups", {})
         gaps = []
         if "gender" in groups:
@@ -810,7 +862,7 @@ with about:
     else:
         st.info("The model description appears here once the Day 30 data and the model are available.")
 
-    st.markdown("#### Data source")
+    st.markdown("### Data source")
     st.write("Open University Learning Analytics Dataset (OULAD). As stated on the dataset page "
              "(https://research.stem.open.ac.uk/ouanalyse/open-dataset-more/):")
     st.markdown('- License: "This dataset is released under CC-BY 4.0 license." '
