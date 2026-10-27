@@ -54,6 +54,16 @@ def test_no_raising_input_gives_no_reason_and_no_support(explained):
     assert set(details["suggested_support"]) == {priority.NO_SUPPORT}
 
 
+def test_support_sentence_names_the_fact_then_the_support():
+    from sar.recommend.interventions import INTERVENTIONS
+
+    assert set(priority.SUPPORT_ACTIONS) == set(INTERVENTIONS)
+    assert (priority.support_sentence("weekly_checkins", "1 assessment missed")
+            == "1 assessment missed; a short weekly check-in can help them keep up with activity and deadlines.")
+    assert priority.support_sentence("tutoring", "an average score of 41").startswith("An average score of 41; ")
+    assert priority.similar_line(50, 1) == "Among 50 similar earlier students, 1 ended at risk."
+
+
 def test_selected_row_reads_a_single_row_selection():
     rows = [("AAA", 1), ("BBB", 2)]
     assert priority.selected_row(rows, {"selection": {"rows": [1], "columns": []}}) == ("BBB", 2)

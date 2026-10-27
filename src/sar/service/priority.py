@@ -6,6 +6,9 @@ The same rules as the single-student views, applied to a table of SHAP contribut
   * suggested support: the support type that recommend() would list first, that is the one with the
     largest sum of weight x contribution over the actionable inputs that raise the score
 Neither needs the similar-student pool, so the whole list can be filled from precomputed values.
+
+The student view's wording also lives here: one plain sentence per suggested support type, built from
+the Day 30 fact that matched it, and a short line on similar earlier students.
 """
 
 import numpy as np
@@ -17,6 +20,28 @@ from sar.recommend.interventions import ACTIONABLE_FEATURES, FEATURE_TO_INTERVEN
 
 NO_REASON = "No activity, assessment or study-load input raises the score noticeably"
 NO_SUPPORT = "None matched"
+# What each support type offers, written to follow the Day 30 fact that matched it.
+SUPPORT_ACTIONS = {
+    "tutoring": "a tutor can go over the module content and the next assessment with them.",
+    "peer_tutoring": "study sessions with an experienced student on the module can help them keep up.",
+    "mentoring": "a mentor can help them plan their study time and workload.",
+    "weekly_checkins": "a short weekly check-in can help them keep up with activity and deadlines.",
+    "financial_aid_referral": "the student funding and support team can advise if study load or registration "
+                              "is a barrier.",
+}
+
+
+def _capital(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def support_sentence(intervention: str, fact: str) -> str:
+    """One plain sentence: the Day 30 fact that matched a support type, then what that support offers."""
+    return f"{_capital(fact)}; {SUPPORT_ACTIONS[intervention]}"
+
+
+def similar_line(n: int, n_at_risk: int) -> str:
+    return f"Among {n:,} similar earlier students, {n_at_risk:,} ended at risk."
 
 
 def priority_details(values: pd.DataFrame, contributions: pd.DataFrame) -> pd.DataFrame:

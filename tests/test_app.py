@@ -174,19 +174,28 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
     assert re.search(r":(red|gray|blue)-badge\[(High|Medium|Low) risk\]", text)
     assert re.search(rf"ranked \d+ of [\d,]+ in module", text)
     why = [s for s in _chart_specs(at) if s["layout"]["title"]["text"] == "What moves this score"][0]
-    bars = why["data"][0]
-    assert bars["orientation"] == "h" and 1 <= len(bars["y"]) <= 6
-    assert all((c == "#C44E52") == (x > 0) for c, x in zip(bars["marker"]["color"], bars["x"]))
+    traces = {t["name"]: t for t in why["data"]}
+    assert set(traces) == {"Raises risk", "Lowers risk"} and why["layout"]["xaxis"]["title"]["text"] == "Effect on risk"
+    assert traces["Raises risk"]["marker"]["color"] == "#C44E52" and all(x > 0 for x in traces["Raises risk"]["x"])
+    assert all(x <= 0 for x in traces["Lowers risk"]["x"])
+    shown = [p for t in why["data"] for p in t["customdata"]]
+    assert 1 <= len(shown) <= 6 and not any(p.startswith("being on module") for p in shown)
+    assert all(len(line) <= 30 for t in why["data"] for y in t["y"] for line in y.split("<br>"))
     assert "Red bars raise the risk score and blue bars lower it" in text
-    assert "Suggested support" in text and "descriptive, not evidence of effectiveness" in text
+    assert "Suggested support" in text and text.count("descriptive, not evidence of effectiveness") == 1
+    assert re.search(r"Among [\d,]+ similar earlier students, [\d,]+ ended at risk\.", text)
     assert "most similar students from earlier presentations" in text and "OULAD records no interventions" in text
+    assert "Too few similar students" not in text and "linked to" not in text
     snap = snapshot(matrix, "2014J", module, sid, {"active_days": "Active days", "n_missed": "Assessments missed"})
     metrics = {m.label: m for m in tab.metric}
     for f, r in snap.iterrows():
         m = metrics[r["label"]]
         diff = r["difference"]
         assert m.value == f"{r['value']:,.0f}"
-        assert m.delta.endswith("vs module median") and (diff == 0 or m.delta.startswith("+" if diff > 0 else "-"))
+        if diff == 0:
+            assert m.delta == "same as module median"
+        else:
+            assert m.delta.endswith("vs module median") and m.delta.startswith("+" if diff > 0 else "-")
     assert "provisional" not in text.lower()
 
 
@@ -539,6 +548,11 @@ def test_example_buttons_choose_a_validation_student_in_the_band(synthetic_env, 
     text = _texts(at)
     assert f"badge[{band} risk]" in text and f"Module **{expected[0]}**" in text and "ranked " in text
     assert "Suggested support" in text
+    expanders = [e.label for e in _tab(at, "Student").expander]
+    if band == "Low":
+        assert "Low risk: support is optional." in text and "Other options" not in expanders
+    else:
+        assert "support is optional" not in text
     at.button(key=f"example_{band.lower()}").click().run()          # same seed, same student
     assert at.selectbox(key="lookup_student").value == expected[1] and not at.exception
 

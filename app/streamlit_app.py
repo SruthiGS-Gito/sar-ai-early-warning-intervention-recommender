@@ -20,6 +20,7 @@ Layout, built around a tutor's workflow:
 """
 
 import sys
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +40,7 @@ from sar.explain.shap_explain import (  # noqa: E402
     explanation_from_contributions,
     make_explainer,
 )
+from sar.recommend.interventions import ACTIONABLE_FEATURES  # noqa: E402
 from sar.recommend.neighbours import NeighbourPool  # noqa: E402
 from sar.recommend.recommender import NOTE, recommend  # noqa: E402
 from sar.service.data import (  # noqa: E402
@@ -53,7 +55,13 @@ from sar.service.data import (  # noqa: E402
     table_status,
 )
 from sar.service.figures import band_figure, hidden_bands  # noqa: E402
-from sar.service.priority import priority_details, selected_row, snapshot  # noqa: E402
+from sar.service.priority import (  # noqa: E402
+    priority_details,
+    selected_row,
+    similar_line,
+    snapshot,
+    support_sentence,
+)
 from sar.service.views import (  # noqa: E402
     KEY,
     MIN_CELL,
@@ -98,6 +106,8 @@ SNAPSHOT = {"total_clicks": "Total clicks", "active_days": "Active days",
             "trailing_inactive_days": f"Days inactive just before Day {CUTOFF_DAY}",
             "n_submitted": "Assessments submitted", "n_missed": "Assessments missed"}
 LOWER_IS_BETTER = {"trailing_inactive_days", "n_missed"}
+SAME_AS_MEDIAN = "same as module median"
+WRAP = 30  # characters per line of a factor label
 CHART_HEIGHT = 380
 MAX_LIVE_REASONS = 50
 OPEN_FOR_DETAILS = "Open the student to see"
@@ -367,14 +377,21 @@ def number(v: float) -> str:
 
 
 def why_chart(expl):
-    """The six inputs that move this student's score most, in plain words, coloured by direction."""
-    c = expl.contributions[expl.contributions["group"] != "background"]
+    """The six actionable inputs that move this student's score most, in plain words, coloured by direction.
+    Course-level context (the module, its assessment calendar) stays in the full table below the chart."""
+    c = expl.contributions[expl.contributions.index.isin(ACTIONABLE_FEATURES)]
     top = c.loc[c["contribution"].abs().sort_values(ascending=False).index[:6]].iloc[::-1]
-    fig = go.Figure(go.Bar(x=top["contribution"].tolist(), y=top["phrase"].tolist(), orientation="h",
-                           marker_color=[AT_RISK if v > 0 else ON_TRACK for v in top["contribution"]],
-                           hovertemplate="%{y}: %{x:+.3f}<extra></extra>"))
+    labels = ["<br>".join(textwrap.wrap(p, WRAP)) for p in top["phrase"]]
+    fig = go.Figure()
+    for name, colour, raises in [("Raises risk", AT_RISK, True), ("Lowers risk", ON_TRACK, False)]:
+        part = (top["contribution"] > 0) == raises
+        fig.add_trace(go.Bar(x=top.loc[part, "contribution"].tolist(),
+                             y=[lab for lab, p in zip(labels, part) if p], orientation="h", name=name,
+                             marker_color=colour, customdata=top.loc[part, "phrase"].tolist(),
+                             hovertemplate="%{customdata}: %{x:+.3f}<extra></extra>"))
     fig.update_layout(title="What moves this score", height=CHART_HEIGHT, margin={"t": 50, "l": 10, "r": 10},
-                      xaxis_title="Change in risk score", showlegend=False)
+                      xaxis_title="Effect on risk", legend={"orientation": "h", "y": -0.2},
+                      yaxis={"automargin": True, "categoryorder": "array", "categoryarray": labels})
     return fig
 
 
@@ -407,29 +424,45 @@ def student_view(pres: str, module: str, sid: int) -> None:
         if not pool_l.ok:
             st.info(pool_l.message)
         else:
-            rec = recommend(expl, row, pool_l.value)
-            if rec.optional:
-                st.caption("Low risk band, so these suggestions are optional.")
-            if not rec.suggestions:
-                st.write("No activity, assessment or study-load input raises the score noticeably, "
-                         "so no support type is matched.")
-            for s in rec.suggestions:
-                with st.container(border=True):
-                    st.markdown(f"**{s.label}**")
-                    st.write(s.reason.split(": ", 1)[1])
-                    st.caption(f"{DESCRIPTIVE}: {s.evidence}")
-            with st.expander("About these suggestions"):
-                st.caption(rec.neighbours.summary())
-                st.caption(NOTE)
+            support_cards(expl, recommend(expl, row, pool_l.value))
     with snap:
         st.markdown(f"#### Day {CUTOFF_DAY} snapshot")
         values = snapshot(matrix, pres, module, sid, SNAPSHOT)
         for f, r in values.iterrows():
             diff = r["difference"]
-            sign = "+" if diff > 0 else "-" if diff < 0 else ""
-            st.metric(r["label"], number(r["value"]), delta=f"{sign}{number(abs(diff))} vs module median",
-                      delta_color="off" if diff == 0 else "inverse" if f in LOWER_IS_BETTER else "normal",
+            if diff == 0:
+                delta, colour = SAME_AS_MEDIAN, "off"
+            else:
+                delta = f"{'+' if diff > 0 else '-'}{number(abs(diff))} vs module median"
+                colour = "inverse" if f in LOWER_IS_BETTER else "normal"
+            st.metric(r["label"], number(r["value"]), delta=delta, delta_color=colour,
+                      delta_arrow="off" if diff == 0 else "auto",
                       help=f"Module median in {pres}: {number(r['median'])}.")
+
+
+def support_cards(expl, rec) -> None:
+    """One primary suggestion as a card, in a plain sentence; for Low-band students only that one, marked
+    optional; otherwise the rest under "Other options", with the descriptive-context note shown once."""
+    if not rec.suggestions:
+        st.write("No activity, assessment or study-load input raises the score noticeably, so no support type "
+                 "is matched.")
+    else:
+        if rec.optional:
+            st.caption("Low risk: support is optional.")
+        first, others = rec.suggestions[0], ([] if rec.optional else rec.suggestions[1:])
+        with st.container(border=True):
+            st.markdown(f"**{first.label}**")
+            st.write(support_sentence(first.intervention, expl.contributions.loc[first.drivers[0], "phrase"]))
+            st.caption(similar_line(rec.neighbours.n, rec.neighbours.n_at_risk))
+        if others:
+            with st.expander("Other options"):
+                for s in others:
+                    st.markdown(f"**{s.label}**: "
+                                + support_sentence(s.intervention, expl.contributions.loc[s.drivers[0], "phrase"]))
+                st.caption(f"{DESCRIPTIVE}: {rec.neighbours.summary()} {NOTE}")
+            return
+    with st.expander("About these suggestions"):
+        st.caption(f"{DESCRIPTIVE}: {rec.neighbours.summary()} {NOTE}")
 
 
 with student:
