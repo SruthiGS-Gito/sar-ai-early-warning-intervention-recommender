@@ -38,12 +38,19 @@ def synthetic_env(empty_env, matrix, small_final):
     return empty_env
 
 
-MAIN_TABS = ["Student Lookup", "Department Dashboard", "Retention Funnel", "Batch Report"]
+MAIN_TABS = ["Priority list", "Student", "Cohort insights"]
 DEVELOPER_TEXT = re.compile(r"SCRUM-|ticket \d|scripts/|\.py\b|docs/|models/|metrics\.json|last updated|\d+ rows")
 
 
 def _main_tab_texts(at) -> str:
-    return "\n".join(_texts(t) for t in at.tabs if t.label in MAIN_TABS)
+    """Text of the sidebar and of every tab except About."""
+    return "\n".join([_texts(at.sidebar)] + [_texts(t) for t in at.tabs if t.label in MAIN_TABS])
+
+
+def _open_training(at, presentation: str = "2013J"):
+    at.toggle(key="show_training").set_value(True).run()
+    at.selectbox(key="presentation").set_value(presentation).run()
+    return at
 
 
 def _about_text(at) -> str:
@@ -152,9 +159,7 @@ def test_lookup_uses_precomputed_explanations_when_present(synthetic_env, matrix
 
 
 def test_training_presentation_is_labelled(synthetic_env):
-    at = AppTest.from_file(APP, default_timeout=120).run()
-    at.toggle(key="batch_presentation_training").set_value(True).run()
-    at.selectbox(key="batch_presentation").set_value("2013J").run()
+    at = _open_training(AppTest.from_file(APP, default_timeout=120).run())
     assert not at.exception
     assert "training presentation" in _texts(at)
 
@@ -184,7 +189,7 @@ def test_team_tables_are_shown_with_charts(tables_env):
     text = _texts(at)
     assert "not available yet" not in text and "**Status:**" not in text
     assert "#### Student profiles" in text
-    assert "#### Department risk" not in text and "#### Retention funnel" not in text
+    assert "#### Department risk" not in text and "#### Retention funnel" in text      # funnel shares a tab now
     assert "Retrospective, descriptive view" in text and "not model inputs" in text
     assert "Counts under 20 are hidden" in text and "{" not in text
     validation = prof[prof["scope"] == "validation"]
@@ -195,12 +200,10 @@ def test_team_tables_are_shown_with_charts(tables_env):
 
 
 def test_team_table_selectors_and_training_note(tables_env):
-    at = AppTest.from_file(APP, default_timeout=120).run()
-    at.toggle(key="dept_presentation_training").set_value(True).run()
-    at.selectbox(key="dept_presentation").set_value("2013J").run()
+    at = _open_training(AppTest.from_file(APP, default_timeout=120).run())
     assert not at.exception and "Training presentation: the model learned" in _texts(at)
+    assert "Shown for the training presentations together" in _texts(at)
     at.selectbox(key="funnel_module").set_value("AAA").run()
-    at.radio(key="profile_scope").set_value("training").run()
     assert not at.exception
 
 
@@ -248,10 +251,9 @@ def test_band_views_default_to_the_validation_presentation(tables_env):
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
     text = _texts(at)
-    keys = {s.key for s in at.selectbox}
-    assert "dept_presentation" not in keys and "batch_presentation" not in keys
-    assert text.count("Showing 2014J, the validation presentation.") == 2
-    assert text.count("Training presentations have in-sample scores") == 2
+    assert at.selectbox(key="presentation").options == ["2014J (validation)"]
+    assert at.selectbox(key="presentation").value == "2014J" and not at.toggle(key="show_training").value
+    assert _texts(at.sidebar).count("Training presentations have in-sample scores") == 1
     dept = [df.value for df in at.dataframe if "High band" in df.value.columns][0]
     assert "Presentation" not in dept.columns and "Scores" not in dept.columns
     assert "All figures below are for 2014J; scores are validation (2014J)." in text
@@ -259,13 +261,11 @@ def test_band_views_default_to_the_validation_presentation(tables_env):
 
 def test_training_presentations_appear_only_after_opting_in(tables_env):
     at = AppTest.from_file(APP, default_timeout=120).run()
-    at.toggle(key="dept_presentation_training").set_value(True).run()
-    at.toggle(key="batch_presentation_training").set_value(True).run()
+    at.toggle(key="show_training").set_value(True).run()
     assert not at.exception
-    for key in ["dept_presentation", "batch_presentation"]:
-        assert set(at.selectbox(key=key).options) == {"2013B", "2013J", "2014B"}
-    at.toggle(key="batch_presentation_training").set_value(True).run()
-    at.selectbox(key="batch_presentation").set_value("2013J").run()
+    assert at.selectbox(key="presentation").options == [f"{p} (training, in-sample)" for p in
+                                                        ["2013B", "2013J", "2014B"]]
+    at.selectbox(key="presentation").set_value("2013J").run()
     exported = [df.value for df in at.dataframe if "score_source" in df.value.columns]
     assert exported and set(exported[0]["score_source"]) == {"training (in-sample)"}
     by_module = [df.value for df in at.dataframe if "Flagged share" in df.value.columns][0]
@@ -273,9 +273,7 @@ def test_training_presentations_appear_only_after_opting_in(tables_env):
 
 
 def test_training_presentation_metrics_are_labelled_in_sample(synthetic_env):
-    at = AppTest.from_file(APP, default_timeout=120).run()
-    at.toggle(key="batch_presentation_training").set_value(True).run()
-    at.selectbox(key="batch_presentation").set_value("2013J").run()
+    at = _open_training(AppTest.from_file(APP, default_timeout=120).run())
     assert not at.exception
     labels = {m.label for m in at.metric}
     assert {"At-risk caught (in-sample)", "Precision (in-sample)", "Recall (in-sample)"} <= labels
@@ -445,7 +443,7 @@ def test_example_buttons_choose_a_validation_student_in_the_band(synthetic_env, 
     module = at.selectbox(key="lookup_module").value
     at.button(key=f"example_{band.lower()}").click().run()
     assert not at.exception
-    assert at.selectbox(key="lookup_presentation").value == "2014J"
+    assert at.selectbox(key="presentation").value == "2014J"
     scored = views.score_presentation(small_final[0], matrix, "2014J")
     expected = views.example_student(scored, band, module, 42)
     assert (at.selectbox(key="lookup_module").value, at.selectbox(key="lookup_student").value) == expected

@@ -1,24 +1,26 @@
 """SCRUM-189: Streamlit app for the Day 30 early-warning model.
 
 Run from the repo root:  streamlit run app/streamlit_app.py
-Tabs: Student Lookup, Department Dashboard, Retention Funnel, Batch Report, About.
+
+Layout, built around a tutor's workflow:
+* Sidebar: the controls every page uses (presentation, module, contact capacity) and an Advanced
+  section (training presentations with their in-sample note, flagging rule, capacity scope).
+* Tabs: Priority list (who to contact first), Student (why, and what support fits), Cohort
+  insights (bands, profiles and retention by module), About (model, design, limits, data).
 
 * The final model (models/final/) scores students with a calibrated risk score, a risk band
   (Low, Medium, High) and a rank. Students are flagged by capacity ranking or by the wide-net cutoff.
 * Data, model, explainer, precomputed explanations and the similar-student pool load once (cached).
-* Anything missing shows a message; the app does not crash on it. The main tabs speak to staff; file
-  names, build commands, ticket references and build dates are kept in the About tab.
-* Model-based band views (Department risk, Batch Report) show the validation presentation by
-  default. A training presentation, whose scores are in-sample, appears only after the user opts in,
-  with the in-sample note beside the choice and a score-source column in every exportable table.
-* Displays are aggregated by default. One student's details appear only after they are chosen,
-  and the flagged-student list sits in a closed expander.
-* Department, funnel and profile tables (tickets 203, 207 and 210) are aggregated tables built by
-  scripts/build_team_tables.py. Each is shown with a simple chart when its CSV exists and passes the
-  checks in sar.service.data; otherwise a status card says what it is and how to build it.
+* Anything missing shows a message; the app does not crash on it. File names, build commands and
+  build dates are kept in the About tab.
+* The validation presentation is shown by default. A training presentation, whose scores are
+  in-sample, is offered only after the user opts in under Advanced, and is labelled wherever shown.
+* Displays are aggregated by default; individual students appear only in the priority list and the
+  student view. Groups under MIN_CELL students are suppressed in every aggregated table.
 """
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -83,6 +85,9 @@ EVIDENCE_NOTE = ("Observed at-risk rate inside each band, and its lift: the band
                  "at-risk rate of the same row, that is the module's own rate for a module and the cohort's rate for "
                  "All modules. Bands with fewer than {n} students are shown as n < {n}.")
 SCOPE_COHORT, SCOPE_MODULE = "the whole cohort", "each module separately"
+APP_NAME = "Student Academic Risk"
+APP_PURPOSE = "Day 30 early warning: who to contact first, why, and which support fits."
+PAGES = ["Priority list", "Student", "Cohort insights", "About"]
 CALIBRATION_NOTE = ("Each point is a bin of {val} students by calibrated score (width 0.1): its mean calibrated score "
                     "against the share who went on to fail or withdraw, with the number of students beside it. Points "
                     "on the diagonal are well calibrated. Band cutoffs: Medium from {medium:.2f}, High from "
@@ -162,30 +167,6 @@ def get_table(name: str, processed_dir: str) -> TableStatus:
     return table_status(OPTIONAL_TABLES[name], processed_dir)
 
 
-def presentation_picker(matrix, key: str) -> str:
-    options = sorted(matrix["code_presentation"].unique())
-    if key in st.session_state:          # set by a widget or an example button; no default needed
-        return st.selectbox("Presentation", options, key=key)
-    default = options.index(TEST_PRESENTATION) if TEST_PRESENTATION in options else len(options) - 1
-    return st.selectbox("Presentation", options, index=default, key=key)
-
-
-def validation_or_training(options, key: str) -> str:
-    """The validation presentation by default. A training presentation is offered only after the user
-    turns on the labelled option, with the in-sample note shown beside it."""
-    if TEST_PRESENTATION not in options:
-        return st.selectbox("Presentation", options, key=key)
-    training = [p for p in options if p != TEST_PRESENTATION]
-    left, right = st.columns([1, 2])
-    opt_in = left.toggle("Show a training presentation (in-sample scores)", key=f"{key}_training",
-                         disabled=not training)
-    right.caption(IN_SAMPLE_NOTE)
-    if not opt_in:
-        st.caption(f"Showing {TEST_PRESENTATION}, the validation presentation.")
-        return TEST_PRESENTATION
-    return st.selectbox("Training presentation (in-sample scores)", training, key=key)
-
-
 def score_source(presentation: str) -> str:
     return SCORE_SOURCE["training" if is_training_presentation(presentation) else "validation"]
 
@@ -248,6 +229,56 @@ def shown_rows(table: pd.DataFrame) -> pd.DataFrame:
     return table[~table["suppressed"].astype(bool)]
 
 
+@dataclass
+class View:
+    """The sidebar selection every page uses."""
+    presentation: str
+    module: str                # a module code, or ALL_MODULES
+    share: float               # contact capacity, 0 to 1
+    rule: str                  # CAPACITY or WIDE_NET
+    per_module: bool           # capacity applies to each module separately
+
+    @property
+    def in_sample(self) -> bool:
+        return is_training_presentation(self.presentation)
+
+
+def presentation_label(p: str) -> str:
+    return f"{p} (validation)" if p == TEST_PRESENTATION else f"{p} (training, in-sample)"
+
+
+def sidebar(presentations: list[str], modules_of) -> View:
+    """App name, purpose and the shared controls. Training presentations appear only after the
+    Advanced toggle is on; the toggle's state is read first so the presentation list can follow it."""
+    sb = st.sidebar
+    sb.title(APP_NAME)
+    sb.caption(APP_PURPOSE)
+    training = [p for p in presentations if p != TEST_PRESENTATION]
+    if TEST_PRESENTATION not in presentations:
+        options = presentations
+    elif st.session_state.get("show_training") and training:
+        options = training
+    else:
+        options = [TEST_PRESENTATION]
+    pres = sb.selectbox("Presentation", options, key="presentation", format_func=presentation_label,
+                        help=f"{TEST_PRESENTATION} is the validation presentation. Training presentations are "
+                             "available under Advanced.")
+    module = sb.selectbox("Module", [ALL_MODULES, *modules_of(pres)], key="module_filter")
+    rule = st.session_state.get("flag_rule", CAPACITY)
+    pct = sb.slider("Contact capacity", min_value=1, max_value=50, value=20, step=1, format="%d%%", key="capacity",
+                    disabled=rule == WIDE_NET,
+                    help="Share of the cohort the team can contact, highest risk first.")
+    with sb.expander("Advanced"):
+        st.toggle("Show training presentations (in-sample scores)", key="show_training", disabled=not training)
+        st.caption(IN_SAMPLE_NOTE)
+        rule = st.radio("Flagging rule", [CAPACITY, WIDE_NET], key="flag_rule")
+        scope = st.radio("Capacity applies to", [SCOPE_COHORT, SCOPE_MODULE], key="capacity_scope",
+                         disabled=rule == WIDE_NET)
+    if is_training_presentation(pres):
+        sb.warning(TRAINING_NOTE)
+    return View(pres, module, pct / 100, rule, scope == SCOPE_MODULE)
+
+
 st.set_page_config(page_title="Student Academic Risk: Day 30 early warning", layout="wide")
 st.title("Student Academic Risk: Day 30 early warning")
 
@@ -268,10 +299,16 @@ if core_ok:
     final = model_l.value
     fitted, cutoffs, metrics = final.fitted, final.fitted["cutoffs"], final.metrics
     edges = dict(risk_band_edges(cutoffs))
-    st.caption(MODEL_NOTE.format(val=", ".join(metrics["validation_presentation"])))
+    ctl = sidebar(sorted(matrix["code_presentation"].unique()),
+                   lambda p: sorted(matrix.loc[matrix["code_presentation"] == p, "code_module"].unique()))
+    st.sidebar.caption(MODEL_NOTE.format(val=", ".join(metrics["validation_presentation"])))
+else:
+    ctl = None
+    st.sidebar.title(APP_NAME)
+    st.sidebar.caption(APP_PURPOSE)
 
-lookup, dashboard, funnel, batch, about = st.tabs(["Student Lookup", "Department Dashboard", "Retention Funnel",
-                                                  "Batch Report", "About"])
+priority, student, cohort, about = st.tabs(PAGES, key="page", on_change="rerun")
+
 
 def show_example(band: str) -> None:
     """Button callback: choose a validation student in `band` (fixed seed), in the current module when possible."""
@@ -280,12 +317,13 @@ def show_example(band: str) -> None:
     pick = example_student(scored, band, current, RANDOM_SEED)
     st.session_state["lookup_example"] = band if pick is None else None
     if pick is not None:
-        st.session_state["lookup_presentation"] = TEST_PRESENTATION
+        st.session_state["show_training"] = False
+        st.session_state["presentation"] = TEST_PRESENTATION
         st.session_state["lookup_module"], st.session_state["lookup_student"] = pick
 
 
-with lookup:
-    st.subheader("Student Lookup")
+with student:
+    st.subheader("Student")
     if not core_ok:
         core_message()
     else:
@@ -296,9 +334,8 @@ with lookup:
             st.info(f"No {TEST_PRESENTATION} student is in the {st.session_state['lookup_example']} band.")
         st.caption(f"Examples are drawn from {TEST_PRESENTATION}, the validation presentation, with a fixed seed: "
                    "from the chosen module when it has a student in that band, otherwise from any module.")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            pres = presentation_picker(matrix, "lookup_presentation")
+        c2, c3 = st.columns(2)
+        pres = ctl.presentation
         in_pres = matrix[matrix["code_presentation"] == pres]
         module = c2.selectbox("Module", sorted(in_pres["code_module"].unique()), key="lookup_module")
         ids = sorted(in_pres.loc[in_pres["code_module"] == module, "id_student"].unique())
@@ -315,8 +352,6 @@ with lookup:
             row = in_pres[(in_pres["code_module"] == module) & (in_pres["id_student"] == sid)].head(1)
             scored = get_scores(processed, models, pres, fitted, matrix)
             me = scored[(scored["code_module"] == module) & (scored["id_student"] == sid)].iloc[0]
-            if is_training_presentation(pres):
-                st.info(TRAINING_NOTE)
             expl = get_explanation(models, pres, module, int(sid), str(me["band"]), fitted, final.config, row)
             left, right = st.columns([3, 2])
             with left:
@@ -348,14 +383,14 @@ with lookup:
             with st.expander("All inputs and their contributions"):
                 st.dataframe(explanation_table(expl), hide_index=True)
 
-with dashboard:
-    st.subheader("Department Dashboard")
+with cohort:
+    st.subheader("Cohort insights")
     st.write("Risk bands and observed outcomes for each module, followed by the Day 30 engagement profiles of "
              "the students.")
     dept = team_table("department_risk", processed, heading=False)
     if dept is not None:
         st.caption(DEPT_NOTE.format(n=MIN_CELL))
-        pres = validation_or_training(sorted(dept["code_presentation"].unique()), "dept_presentation")
+        pres = ctl.presentation if ctl else TEST_PRESENTATION
         part = dept[dept["code_presentation"] == pres]
         if (part["score_source"] == "training").any():
             st.info(DEPT_TRAINING_NOTE)
@@ -391,11 +426,10 @@ with dashboard:
 
     prof = team_table("student_profiles", processed)
     if prof is not None:
-        scopes = {"validation": f"{TEST_PRESENTATION} students (validation)",
-                  "training": "Training presentations (used to fit the clusters)"}
-        scope = st.radio("Students", [s for s in scopes if s in set(prof["scope"])], format_func=scopes.get,
-                         horizontal=True, key="profile_scope")
-        st.caption(PROFILE_NOTE.format(val=TEST_PRESENTATION))
+        scope = "training" if ctl and ctl.in_sample and "training" in set(prof["scope"]) else "validation"
+        st.caption(PROFILE_NOTE.format(val=TEST_PRESENTATION) + (
+            " Shown for the training presentations together, the rows the clusters were fitted on."
+            if scope == "training" else ""))
         part = prof[prof["scope"] == scope].sort_values("at_risk_rate", ascending=False, na_position="last")
         means = {f"mean_{f}": PROFILE_HEADERS[f"mean_{f}"] for f in PROFILE_FEATURES}
         view = part[["profile", "students", "share_of_scope", "at_risk_rate", *means]].rename(
@@ -413,17 +447,13 @@ with dashboard:
                           height=340, margin={"t": 50}, title="Observed at-risk rate by profile")
         st.plotly_chart(fig, width="stretch")
 
-with funnel:
-    st.subheader("Retention Funnel")
+    st.markdown("#### Retention funnel")
     st.info(FUNNEL_NOTE)
     fun = team_table("retention_funnel", processed, heading=False)
     if fun is not None:
-        c1, c2 = st.columns(2)
-        options = sorted(fun["code_presentation"].unique())
-        pres = c1.selectbox("Presentation", options, key="funnel_presentation",
-                            index=options.index(TEST_PRESENTATION) if TEST_PRESENTATION in options else 0)
+        pres = ctl.presentation if ctl else TEST_PRESENTATION
         in_pres = fun[fun["code_presentation"] == pres]
-        module = c2.selectbox("Module", [ALL_MODULES, *sorted(set(in_pres["code_module"]) - {ALL_MODULES})],
+        module = st.selectbox("Module", [ALL_MODULES, *sorted(set(in_pres["code_module"]) - {ALL_MODULES})],
                               key="funnel_module")
         part = in_pres[in_pres["code_module"] == module].sort_values("stage_order")
         part = part.assign(stage=part["stage"].where(part["applicable"].astype(bool),
@@ -453,23 +483,16 @@ with funnel:
         view.loc[~part["applicable"].astype(bool).to_numpy(), "Share of previous stage"] = float("nan")
         show_table(view, {"Students": "{}", "Share of registered": "{:.0%}", "Share of previous stage": "{:.0%}"})
 
-with batch:
-    st.subheader("Batch Report")
+with priority:
+    st.subheader("Priority list")
     if not core_ok:
         core_message()
     else:
-        pres = validation_or_training(sorted(matrix["code_presentation"].unique()), "batch_presentation")
-        if is_training_presentation(pres):
-            st.info(TRAINING_NOTE)
-        in_sample = is_training_presentation(pres)
+        pres = ctl.presentation
+        in_sample = ctl.in_sample
         scored = get_scores(processed, models, pres, fitted, matrix)
-        rule = st.radio("Flagging rule", [CAPACITY, WIDE_NET], horizontal=True, key="flag_rule")
-        if rule == CAPACITY:
-            pct = st.slider("Contact capacity (share of this cohort)", min_value=1, max_value=50, value=20, step=1,
-                            format="%d%%", key="capacity")
-            scope = st.radio("Capacity applies to", [SCOPE_COHORT, SCOPE_MODULE], horizontal=True,
-                             key="capacity_scope")
-            flagging = flag_capacity(scored, pct / 100, per_module=scope == SCOPE_MODULE)
+        if ctl.rule == CAPACITY:
+            flagging = flag_capacity(scored, ctl.share, per_module=ctl.per_module)
         else:
             flagging = flag_wide_net(scored, cutoffs)
         scored = scored.assign(flagged=flagging.flagged)
@@ -536,8 +559,10 @@ with batch:
 
         with st.expander("Flagged students (individual rows; for staff follow-up only)"):
             flagged = scored[scored["flagged"]].sort_values("rank")[KEY + ["band", "rank"]]
+            if ctl.module != ALL_MODULES:
+                flagged = flagged[flagged["code_module"] == ctl.module]
             flagged = flagged.assign(score_source=score_source(pres))
-            st.caption("Open a student in Student Lookup to see the reasons and suggested support.")
+            st.caption("Open a student in the Student tab to see the reasons and suggested support.")
             st.dataframe(flagged, hide_index=True)
             st.download_button("Download the flagged list (CSV)", flagged.to_csv(index=False),
                                file_name=f"flagged_{pres}{'_in_sample' if is_training_presentation(pres) else ''}.csv",
@@ -629,7 +654,7 @@ with about:
                  "on its own.")
 
         st.markdown("#### Capacity flagging")
-        st.write("The Batch Report ranks the chosen cohort by calibrated risk (ties broken by the forest's raw score) "
+        st.write("The priority list ranks the chosen cohort by calibrated risk (ties broken by the forest's raw score) "
                  "and flags the highest-risk share set on the slider, to match a team with a fixed number of "
                  "contacts; the share can apply to the whole cohort or to each module. Precision, recall and the "
                  "at-risk students caught or missed are computed from that cohort's observed outcomes. The wide-net "
@@ -657,8 +682,8 @@ with about:
             f"- In some modules no assessment is due by Day {CUTOFF_DAY} ({no_due}), so the model has no early "
             "scores there.\n"
             f"- With 20% capacity across the whole cohort on {val}, the lowest module recall is {lowest} (share of "
-            "the module's at-risk students who are flagged); the Batch Report can apply capacity to each module "
-            "instead.\n"
+            "the module's at-risk students who are flagged); capacity can apply to each module instead "
+            "(sidebar, Advanced).\n"
             + (f"- Recall differs between groups at the top-20% cutoff on {val}: {'; '.join(gaps)}.\n" if gaps else "")
             + f"- Validation figures come from one presentation ({val}); training presentations are in-sample.")
     else:
