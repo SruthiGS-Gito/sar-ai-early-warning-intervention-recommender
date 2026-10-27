@@ -25,7 +25,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import plotly.graph_objects as go  # noqa: E402
@@ -33,8 +32,13 @@ import streamlit as st  # noqa: E402
 
 from sar.config import CUTOFF_DAY, RANDOM_SEED  # noqa: E402
 from sar.data.split import TEST_PRESENTATION, make_split, overlap_report  # noqa: E402
-from sar.explain.chart import explanation_table, plot_explanation  # noqa: E402
-from sar.explain.shap_explain import explain_student, explanation_from_contributions, make_explainer  # noqa: E402
+from sar.explain.chart import explanation_table  # noqa: E402
+from sar.explain.shap_explain import (  # noqa: E402
+    explain_rows,
+    explain_student,
+    explanation_from_contributions,
+    make_explainer,
+)
 from sar.recommend.neighbours import NeighbourPool  # noqa: E402
 from sar.recommend.recommender import NOTE, recommend  # noqa: E402
 from sar.service.data import (  # noqa: E402
@@ -49,6 +53,7 @@ from sar.service.data import (  # noqa: E402
     table_status,
 )
 from sar.service.figures import band_figure, hidden_bands  # noqa: E402
+from sar.service.priority import priority_details, selected_row, snapshot  # noqa: E402
 from sar.service.views import (  # noqa: E402
     KEY,
     MIN_CELL,
@@ -88,6 +93,16 @@ SCOPE_COHORT, SCOPE_MODULE = "the whole cohort", "each module separately"
 APP_NAME = "Student Academic Risk"
 APP_PURPOSE = "Day 30 early warning: who to contact first, why, and which support fits."
 PAGES = ["Priority list", "Student", "Cohort insights", "About"]
+BADGE_COLOURS = {"High": "red", "Medium": "gray", "Low": "blue"}
+SNAPSHOT = {"total_clicks": "Total clicks", "active_days": "Active days",
+            "trailing_inactive_days": f"Days inactive just before Day {CUTOFF_DAY}",
+            "n_submitted": "Assessments submitted", "n_missed": "Assessments missed"}
+LOWER_IS_BETTER = {"trailing_inactive_days", "n_missed"}
+MAX_LIVE_REASONS = 50
+OPEN_FOR_DETAILS = "Open the student to see"
+WHY_LEGEND = "Red bars raise the risk score and blue bars lower it; a longer bar means a larger effect."
+PSEUDONYM_NOTE = "Student IDs are the pseudonymised identifiers published with OULAD."
+DESCRIPTIVE = "Similar past students (descriptive, not evidence of effectiveness)"
 CALIBRATION_NOTE = ("Each point is a bin of {val} students by calibrated score (width 0.1): its mean calibrated score "
                     "against the share who went on to fail or withdraw, with the number of students beside it. Points "
                     "on the diagonal are well calibrated. Band cutoffs: Medium from {medium:.2f}, High from "
@@ -160,6 +175,33 @@ def get_explanation(models_dir: str, presentation: str, module: str, student: in
             return explanation_from_contributions(_row[features].iloc[0], contrib, base, hit.iloc[0]["raw_score"],
                                                   band)
     return explain_student(_fitted["model"], _row[features], get_explainer(models_dir, _fitted["model"]), band)
+
+
+@st.cache_data(show_spinner="Preparing reasons and suggestions...")
+def get_details(models_dir: str, presentation: str, keys: pd.DataFrame, _fitted, _config, _matrix) -> pd.DataFrame:
+    """Main reason and suggested support for the students in `keys` (key columns, in list order). Uses the
+    precomputed explanations when present; otherwise explains at most MAX_LIVE_REASONS students, the
+    top of the list, and marks the rest to be opened one at a time."""
+    features = _fitted["features"]
+    out = keys.reset_index(drop=True).assign(main_reason=OPEN_FOR_DETAILS, suggested_support=OPEN_FOR_DETAILS)
+    rows = out[KEY].merge(_matrix, on=KEY, how="left")
+    stored = get_shap_cache(models_dir, presentation, _config)
+    if stored.ok:
+        table, _ = stored.value
+        shap_cols = [SHAP_PREFIX + f for f in features]
+        got = out[["code_module", "id_student"]].merge(table[["code_module", "id_student", *shap_cols]],
+                                                       on=["code_module", "id_student"], how="left")
+        known = got[shap_cols].notna().all(axis=1).to_numpy()
+        contrib = got.loc[known, shap_cols].set_axis(features, axis=1)
+    else:
+        known = np.arange(len(out)) < MAX_LIVE_REASONS
+        live = rows.loc[known, features]
+        contrib = (explain_rows(_fitted["model"], live, get_explainer(models_dir, _fitted["model"]))[1]
+                   if len(live) else pd.DataFrame(columns=features))
+    if known.any():
+        details = priority_details(rows.loc[known, features], contrib.set_axis(rows.index[known]))
+        out.loc[known, ["main_reason", "suggested_support"]] = details[["main_reason", "suggested_support"]].values
+    return out
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -322,66 +364,111 @@ def show_example(band: str) -> None:
         st.session_state["lookup_module"], st.session_state["lookup_student"] = pick
 
 
+def open_selected() -> None:
+    """Priority-list selection callback: open the chosen student in the Student tab."""
+    pick = selected_row(st.session_state.get("priority_rows", []), st.session_state.get("priority_table"))
+    if pick is not None:
+        st.session_state["lookup_module"], st.session_state["lookup_student"] = pick
+        st.session_state["page"] = "Student"
+
+
+def number(v: float) -> str:
+    return f"{v:,.0f}" if float(v).is_integer() else f"{v:,.1f}"
+
+
+def why_chart(expl):
+    """The six inputs that move this student's score most, in plain words, coloured by direction."""
+    c = expl.contributions[expl.contributions["group"] != "background"]
+    top = c.loc[c["contribution"].abs().sort_values(ascending=False).index[:6]].iloc[::-1]
+    fig = go.Figure(go.Bar(x=top["contribution"].tolist(), y=top["phrase"].tolist(), orientation="h",
+                           marker_color=[AT_RISK if v > 0 else ON_TRACK for v in top["contribution"]],
+                           hovertemplate="%{y}: %{x:+.3f}<extra></extra>"))
+    fig.update_layout(title="What moves this score", height=360, margin={"t": 50, "l": 10, "r": 10},
+                      xaxis_title="Change in risk score", showlegend=False)
+    return fig
+
+
+def student_view(pres: str, module: str, sid: int) -> None:
+    in_pres = matrix[matrix["code_presentation"] == pres]
+    row = in_pres[(in_pres["code_module"] == module) & (in_pres["id_student"] == sid)].head(1)
+    scored = get_scores(processed, models, pres, fitted, matrix)
+    me = scored[(scored["code_module"] == module) & (scored["id_student"] == sid)].iloc[0]
+    band = str(me["band"])
+    expl = get_explanation(models, pres, module, int(sid), band, fitted, final.config, row)
+    rank, n_module = module_rank(scored, module, sid)
+
+    head = st.container(horizontal=True, vertical_alignment="center", gap="medium")
+    head.markdown(f"### Student {sid}")
+    head.markdown(f"Module **{module}**")
+    head.badge(f"{band} risk", color=BADGE_COLOURS[band],
+               help=BAND_HELP.format(**{k.lower(): v for k, v in edges.items()}))
+    head.markdown(f"ranked {rank:,} of {n_module:,} in module" + (" (in-sample)" if ctl.in_sample else ""))
+
+    why, support, snap = st.columns(3, border=True)
+    with why:
+        st.plotly_chart(why_chart(expl), width="stretch")
+        st.caption(WHY_LEGEND)
+        with st.expander("In words, and all inputs"):
+            st.write(expl.sentence)
+            st.dataframe(explanation_table(expl), hide_index=True)
+    with support:
+        st.markdown("#### Suggested support")
+        pool_l = get_pool(processed, matrix)
+        if not pool_l.ok:
+            st.info(pool_l.message)
+        else:
+            rec = recommend(expl, row, pool_l.value)
+            if rec.optional:
+                st.caption("Low risk band, so these suggestions are optional.")
+            if not rec.suggestions:
+                st.write("No activity, assessment or study-load input raises the score noticeably, "
+                         "so no support type is matched.")
+            for s in rec.suggestions:
+                with st.container(border=True):
+                    st.markdown(f"**{s.label}**")
+                    st.write(s.reason.split(": ", 1)[1])
+                    st.caption(f"{DESCRIPTIVE}: {s.evidence}")
+            with st.expander("About these suggestions"):
+                st.caption(rec.neighbours.summary())
+                st.caption(NOTE)
+    with snap:
+        st.markdown(f"#### Day {CUTOFF_DAY} snapshot")
+        values = snapshot(matrix, pres, module, sid, SNAPSHOT)
+        for f, r in values.iterrows():
+            diff = r["difference"]
+            sign = "+" if diff > 0 else "-" if diff < 0 else ""
+            st.metric(r["label"], number(r["value"]), delta=f"{sign}{number(abs(diff))} vs module median",
+                      delta_color="off" if diff == 0 else "inverse" if f in LOWER_IS_BETTER else "normal",
+                      help=f"Module median in {pres}: {number(r['median'])}.")
+
+
 with student:
-    st.subheader("Student")
     if not core_ok:
         core_message()
     else:
-        b1, b2, _ = st.columns([1, 1, 2])
-        b1.button("Show an example High-risk student", key="example_high", on_click=show_example, args=("High",))
-        b2.button("Show an example Low-risk student", key="example_low", on_click=show_example, args=("Low",))
-        if st.session_state.get("lookup_example"):
-            st.info(f"No {TEST_PRESENTATION} student is in the {st.session_state['lookup_example']} band.")
-        st.caption(f"Examples are drawn from {TEST_PRESENTATION}, the validation presentation, with a fixed seed: "
-                   "from the chosen module when it has a student in that band, otherwise from any module.")
-        c2, c3 = st.columns(2)
         pres = ctl.presentation
         in_pres = matrix[matrix["code_presentation"] == pres]
-        module = c2.selectbox("Module", sorted(in_pres["code_module"].unique()), key="lookup_module")
+        bar = st.container(horizontal=True, vertical_alignment="bottom")
+        bar.button("Show an example High-risk student", key="example_high", on_click=show_example, args=("High",),
+                   help=f"A {TEST_PRESENTATION} student in the High band, drawn with a fixed seed from the chosen "
+                        "module when it has one.")
+        bar.button("Show an example Low-risk student", key="example_low", on_click=show_example, args=("Low",),
+                   help=f"A {TEST_PRESENTATION} student in the Low band, drawn the same way.")
+        module = bar.selectbox("Module", sorted(in_pres["code_module"].unique()), key="lookup_module")
         ids = sorted(in_pres.loc[in_pres["code_module"] == module, "id_student"].unique())
         if st.session_state.get("lookup_student") not in ids:
             st.session_state.pop("lookup_student", None)
         if "lookup_student" in st.session_state:
-            sid = c3.selectbox("Student ID", ids, placeholder="Choose a student", key="lookup_student")
+            sid = bar.selectbox("Student ID", ids, placeholder="Choose a student", key="lookup_student")
         else:
-            sid = c3.selectbox("Student ID", ids, index=None, placeholder="Choose a student", key="lookup_student")
+            sid = bar.selectbox("Student ID", ids, index=None, placeholder="Choose a student", key="lookup_student")
+        if st.session_state.get("lookup_example"):
+            st.info(f"No {TEST_PRESENTATION} student is in the {st.session_state['lookup_example']} band.")
         if sid is None:
-            st.caption(f"{len(ids):,} students in {module} {pres}. Choose one to see why the model scores them "
-                       "as it does and which support fits.")
+            st.info("Select a student in the priority list, choose a module and student ID here, or open an "
+                    "example.")
         else:
-            row = in_pres[(in_pres["code_module"] == module) & (in_pres["id_student"] == sid)].head(1)
-            scored = get_scores(processed, models, pres, fitted, matrix)
-            me = scored[(scored["code_module"] == module) & (scored["id_student"] == sid)].iloc[0]
-            expl = get_explanation(models, pres, module, int(sid), str(me["band"]), fitted, final.config, row)
-            left, right = st.columns([3, 2])
-            with left:
-                fig = plot_explanation(expl)
-                st.pyplot(fig)
-                plt.close(fig)
-            with right:
-                st.metric("Risk band", str(me["band"]), help=BAND_HELP.format(**{k.lower(): v for k, v in edges.items()}))
-                rank, n_module = module_rank(scored, module, sid)
-                st.markdown(f"**{me['band']} risk band**: rank {rank:,} of {n_module:,} students in module "
-                            f"{module} ({pres}) by calibrated risk.")
-                st.write(expl.sentence)
-            st.markdown("#### Suggested support")
-            pool_l = get_pool(processed, matrix)
-            if not pool_l.ok:
-                st.info(pool_l.message)
-            else:
-                rec = recommend(expl, row, pool_l.value)
-                st.caption(rec.neighbours.summary())
-                if rec.optional:
-                    st.caption("Low risk band, so these suggestions are optional.")
-                if not rec.suggestions:
-                    st.write("No activity, assessment or study-load input raises the score noticeably, "
-                             "so no support type is matched.")
-                for i, s in enumerate(rec.suggestions, 1):
-                    st.markdown(f"**{i}. {s.label}**: {s.reason.split(': ', 1)[1]}")
-                    st.caption(s.evidence)
-                st.caption(NOTE)
-            with st.expander("All inputs and their contributions"):
-                st.dataframe(explanation_table(expl), hide_index=True)
+            student_view(pres, module, sid)
 
 with cohort:
     st.subheader("Cohort insights")
@@ -483,8 +570,16 @@ with cohort:
         view.loc[~part["applicable"].astype(bool).to_numpy(), "Share of previous stage"] = float("nan")
         show_table(view, {"Students": "{}", "Share of registered": "{:.0%}", "Share of previous stage": "{:.0%}"})
 
+def rule_caption(c: View) -> str:
+    where = "all modules" if c.module == ALL_MODULES else f"module {c.module}"
+    if c.rule == WIDE_NET:
+        cut = cutoffs["wide_net"]["score"]
+        return f"Wide net: calibrated risk score of at least {cut:.2f}, {c.presentation}, {where}."
+    whose = f"each module in {c.presentation}" if c.per_module else c.presentation
+    return f"Top {c.share:.0%} of {whose} by risk, {where}."
+
+
 with priority:
-    st.subheader("Priority list")
     if not core_ok:
         core_message()
     else:
@@ -496,34 +591,71 @@ with priority:
         else:
             flagging = flag_wide_net(scored, cutoffs)
         scored = scored.assign(flagged=flagging.flagged)
-        outcome = flag_outcome(scored, scored["flagged"])
+        in_view = scored if ctl.module == ALL_MODULES else scored[scored["code_module"] == ctl.module]
+        outcome = flag_outcome(in_view, in_view["flagged"])
         tag = " (in-sample)" if in_sample else ""
-        st.caption(f"{flagging.label}. Caught, missed, precision and recall compare the flags with this cohort's "
-                   "observed outcomes (Fail or Withdrawn)" + ("; in-sample for a training presentation." if in_sample
-                                                             else "."))
-        cards = st.columns(6)
-        cards[0].metric("Students", f"{outcome.students:,}")
-        cards[1].metric("Flagged", f"{outcome.flagged:,}",
-                        help=f"{outcome.flagged / outcome.students:.0%} of the cohort" if outcome.students else None)
-        cards[2].metric("At-risk caught" + tag, f"{outcome.caught:,}")
-        cards[3].metric("At-risk missed" + tag, f"{outcome.missed:,}")
-        cards[4].metric("Precision" + tag, "\u2013" if outcome.flagged == 0 else f"{outcome.precision:.0%}")
-        cards[5].metric("Recall" + tag, "\u2013" if outcome.at_risk == 0 else f"{outcome.recall:.0%}")
-        by_band = flagged_by_band(scored)
-        st.caption("Flagged students by risk band: " + ", ".join(f"{b} {n:,}" for b, n in by_band.items()) + ". "
-                   + FLAG_VS_BAND)
+        cards = st.columns(4)
+        cards[0].metric("Students in view", f"{outcome.students:,}", border=True,
+                        help="Students in the selected presentation and module.")
+        cards[1].metric("Flagged for contact", f"{outcome.flagged:,}", border=True,
+                        help=(f"{outcome.flagged / outcome.students:.0%} of the students in view, highest risk first."
+                              if outcome.students else None))
+        cards[2].metric("Precision of the flags" + tag, DASH if outcome.flagged == 0 else f"{outcome.precision:.0%}",
+                        border=True, help=f"{outcome.caught:,} of the {outcome.flagged:,} flagged students went on "
+                                          "to fail or withdraw.")
+        cards[3].metric("Share of at-risk students reached" + tag,
+                        DASH if outcome.at_risk == 0 else f"{outcome.recall:.0%}", border=True,
+                        help=f"{outcome.caught:,} of the {outcome.at_risk:,} students who went on to fail or withdraw "
+                             f"are flagged; {outcome.missed:,} are not.")
+        st.caption(rule_caption(ctl))
 
-        st.markdown("#### By module")
-        summary = batch_summary(scored, outcomes=not in_sample).assign(Scores=score_source(pres)).reset_index()
-        show_table(summary, {"Students": "{:,}", "Flagged": "{:,}", "Flagged share": "{:.0%}",
-                             **{b: "{:,}" for b in by_band.index},
-                             **{c: "{:.0%}" for c in ["At-risk rate", "Recall", "Precision"] if c in summary.columns}})
-        if in_sample:
-            st.caption(f"Per-module at-risk rate, recall and precision are shown for {TEST_PRESENTATION} only.")
+        flagged = in_view[in_view["flagged"]].sort_values("rank")
+        if flagged.empty:
+            st.info("No student in view is flagged with this rule. Raise the capacity or choose another module.")
         else:
-            st.caption("Recall is the share of the module's at-risk students who are flagged; precision is the share "
-                       "of the module's flagged students who are at risk.")
+            details = get_details(models, pres, flagged[KEY].reset_index(drop=True), fitted, final.config, matrix)
+            listing = pd.DataFrame({
+                "Rank": range(1, len(flagged) + 1), "Student ID": flagged["id_student"].astype(str).to_numpy(),
+                "Module": flagged["code_module"].to_numpy(), "Risk band": flagged["band"].astype(str).to_numpy(),
+                "Main reason": details["main_reason"].to_numpy(),
+                "Suggested support": details["suggested_support"].to_numpy()})
+            st.session_state["priority_rows"] = list(zip(flagged["code_module"], flagged["id_student"].astype(int)))
+            st.dataframe(listing, hide_index=True, key="priority_table", on_select=open_selected,
+                         selection_mode="single-row",
+                         column_config={"Rank": st.column_config.NumberColumn(width="small"),
+                                        "Student ID": st.column_config.TextColumn(width="small"),
+                                        "Module": st.column_config.TextColumn(width="small"),
+                                        "Risk band": st.column_config.TextColumn(width="small"),
+                                        "Main reason": st.column_config.TextColumn(width="large"),
+                                        "Suggested support": st.column_config.TextColumn(width="medium")})
+            if (details["main_reason"] == OPEN_FOR_DETAILS).any():
+                st.caption(f"Reasons and suggestions are prepared for the top {MAX_LIVE_REASONS} students of this "
+                           "presentation; open any other student to see theirs.")
+            st.caption("Select a row to open the student. " + PSEUDONYM_NOTE)
+            export = listing.assign(score_source=score_source(pres))
+            st.download_button("Download the list (CSV)", export.to_csv(index=False),
+                               file_name=f"priority_{pres}{'_in_sample' if in_sample else ''}.csv", mime="text/csv")
 
+        with st.expander("Flags by module and band"):
+            by_band = flagged_by_band(scored)
+            st.caption("Flagged students by risk band: " + ", ".join(f"{b} {n:,}" for b, n in by_band.items())
+                       + ". " + FLAG_VS_BAND)
+            summary = batch_summary(scored, outcomes=not in_sample).assign(Scores=score_source(pres)).reset_index()
+            show_table(summary, {"Students": "{:,}", "Flagged": "{:,}", "Flagged share": "{:.0%}",
+                                 **{b: "{:,}" for b in by_band.index},
+                                 **{c: "{:.0%}" for c in ["At-risk rate", "Recall", "Precision"]
+                                    if c in summary.columns}})
+            if in_sample:
+                st.caption(f"Per-module at-risk rate, recall and precision are shown for {TEST_PRESENTATION} only.")
+            else:
+                st.caption("Recall is the share of the module's at-risk students who are flagged; precision is the "
+                           "share of the module's flagged students who are at risk.")
+
+with cohort:
+    if core_ok:
+        pres = ctl.presentation
+        in_sample = ctl.in_sample
+        scored = get_scores(processed, models, pres, fitted, matrix)
         st.markdown("#### Observed at-risk rate inside each risk band")
         if in_sample:
             st.caption(f"Shown for the validation presentation ({TEST_PRESENTATION}) only; training scores are "
@@ -533,7 +665,7 @@ with priority:
             ev = band_evidence(scored)
             table = ev.pivot(index="code_module", columns="band", values=["students", "at_risk_rate", "lift"])
             order = ["All modules", *sorted(set(ev["code_module"]) - {"All modules"})]
-            bands_hi = list(by_band.index)
+            bands_hi = ["High", "Medium", "Low"]
             table = pd.DataFrame({f"{b}: {lab}": table[(col, b)] for b in bands_hi
                                   for col, lab in [("students", "students"), ("at_risk_rate", "at-risk rate"),
                                                    ("lift", "lift")]}).loc[order]
@@ -556,17 +688,6 @@ with priority:
                           title=f"Observed at-risk rate against calibrated score, {TEST_PRESENTATION}")
         st.plotly_chart(fig, width="stretch")
         st.caption(CALIBRATION_NOTE.format(val=TEST_PRESENTATION, medium=edges["Medium"], high=edges["High"]))
-
-        with st.expander("Flagged students (individual rows; for staff follow-up only)"):
-            flagged = scored[scored["flagged"]].sort_values("rank")[KEY + ["band", "rank"]]
-            if ctl.module != ALL_MODULES:
-                flagged = flagged[flagged["code_module"] == ctl.module]
-            flagged = flagged.assign(score_source=score_source(pres))
-            st.caption("Open a student in the Student tab to see the reasons and suggested support.")
-            st.dataframe(flagged, hide_index=True)
-            st.download_button("Download the flagged list (CSV)", flagged.to_csv(index=False),
-                               file_name=f"flagged_{pres}{'_in_sample' if is_training_presentation(pres) else ''}.csv",
-                               mime="text/csv")
 
         st.markdown("### Optional 3D view")
         if st.toggle("Show average risk score by activity and score bands in 3D", key="show_3d"):
