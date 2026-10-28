@@ -1362,7 +1362,9 @@ def page_about() -> None:
             in_val = matrix[matrix["code_presentation"] == val]
             scored_in = in_val[in_val["mean_score"].notna()]
             gap = (scored_in["weighted_score"].isna()).groupby(scored_in["code_module"]).mean()
-            weightless = ", ".join(gap[gap > 0.5].index)
+            weightless = list(gap[gap > 0.5].index)
+            weightless = (" and ".join([", ".join(weightless[:-1]), weightless[-1]]) if len(weightless) > 1
+                          else "".join(weightless))
             st.markdown(
                 "- Support suggestions are rule-based: they match the model's risk drivers to support types and have "
                 "not been tested as interventions.\n"
@@ -1370,8 +1372,8 @@ def page_about() -> None:
                 "unknown.\n"
                 f"- In some modules no assessment is due by Day {CUTOFF_DAY} ({no_due}), so the model has no early "
                 "scores there.\n"
-                + (f"- In {weightless} the assessments due by Day {CUTOFF_DAY} carry no weight, so students there "
-                   "have an average score but no weighted score. That gap is not used as a reason or a support "
+                + (f"- In {weightless}, the work scored by Day {CUTOFF_DAY} carries no weight, so most students "
+                   "there with an average score have no weighted score. That gap is not used as a reason or a support "
                    "trigger.\n" if weightless else "")
                 + f"- With 20% capacity across the whole cohort on {val}, the lowest module recall is {lowest} "
                 "(share of the module's at-risk students who are flagged); capacity can apply to each module instead "

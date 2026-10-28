@@ -821,3 +821,12 @@ def test_review_table_has_a_day30_snapshot_column(synthetic_env, matrix):
     assert first["Day 30 snapshot"] == (f"{days} active day{'' if days == 1 else 's'}, {int(row['n_missed'])} missed, "
                                         f"{int(row['n_submitted'])} submitted")
     assert views.MIN_CELL == 20
+
+
+def test_about_names_modules_whose_scored_work_carries_no_weight(synthetic_env, matrix):
+    processed = synthetic_env / "data" / "processed"
+    weightless = matrix.assign(weighted_score=matrix["weighted_score"].where(matrix["code_module"] != "BBB"))
+    weightless.to_csv(processed / "day30_feature_matrix.csv", index=False)
+    about = _about_text(AppTest.from_file(APP, default_timeout=120).run())
+    assert "In BBB, the work scored by Day 30 carries no weight" in about
+    assert "That gap is not used as a reason or a support trigger." in about
