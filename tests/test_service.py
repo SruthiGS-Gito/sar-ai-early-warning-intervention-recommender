@@ -341,3 +341,27 @@ def test_band_outcome_uses_the_module_and_falls_back_when_small(matrix, small_fi
     rate, n, scope = views.band_outcome(pd.concat([tiny, scored[scored["code_module"] != "AAA"]]), "AAA",
                                         str(tiny["band"].iloc[0]))
     assert scope == "All modules" and n >= views.MIN_CELL
+
+
+def test_priority_export_adds_the_calibrated_score_after_the_band(matrix, small_final):
+    from sar.config import PROTECTED_FEATURES
+
+    scored = views.score_presentation(small_final[0], matrix, "2014J")
+    flagged = scored[views.flag_capacity(scored, 0.5).flagged].sort_values("rank")
+    listing = pd.DataFrame({"Rank": range(1, len(flagged) + 1), "Student ID": flagged["id_student"].astype(str),
+                            "Module": flagged["code_module"], "Risk band": flagged["band"].astype(str),
+                            "Day 30 snapshot": "", "Main reason": "", "Suggested support": ""})
+    export = views.priority_export(listing, flagged["score"], "validation (2014J)")
+    assert list(export.columns) == ["Rank", "Student ID", "Module", "Risk band", "Calibrated score",
+                                    "Day 30 snapshot", "Main reason", "Suggested support", "score_source"]
+    assert not set(PROTECTED_FEATURES) & set(export.columns)
+    got = export["Calibrated score"]
+    assert got.between(0, 1).all() and (got == got.round(3)).all()
+    assert got.to_numpy() == pytest.approx(flagged["score"].to_numpy(), abs=5e-4)
+    assert export["Risk band"].nunique() > 1                                # bands checked below, more than one
+    edges = dict(views.risk_band_edges(small_final[0]["cutoffs"]))
+    upper = {"Low": edges["Medium"], "Medium": edges["High"], "High": 1.0}
+    for band, score in zip(export["Risk band"], got):
+        assert edges[band] - 5e-4 <= score <= upper[band] + 5e-4, (band, score)
+    assert list(views.assign_risk_band(flagged["score"], small_final[0]["cutoffs"]).astype(str)) == list(
+        export["Risk band"])

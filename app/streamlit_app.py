@@ -90,6 +90,7 @@ from sar.service.views import (  # noqa: E402
     example_student,
     is_training_presentation,
     module_rank,
+    priority_export,
     risk_band_edges,
     risk_band_table,
     score_presentation,
@@ -1102,7 +1103,7 @@ def review_table(fs: FlagState, pres: str) -> None:
     if not details["prepared"].all():
         st.caption(f"Reasons and suggestions are prepared for the first {MAX_LIVE_REASONS} students listed.")
     st.caption("Select a row to open the student. " + PSEUDONYM_NOTE)
-    export = listing.assign(score_source=score_source(pres))
+    export = priority_export(listing, fs.flagged["score"], score_source(pres))
     st.download_button("Download the list (CSV)", export.to_csv(index=False),
                        file_name=f"priority_{pres}{'_in_sample' if ctl.in_sample else ''}.csv", mime="text/csv")
 

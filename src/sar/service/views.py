@@ -118,6 +118,17 @@ class FlagOutcome:
         return self.caught / self.at_risk if self.at_risk else float("nan")
 
 
+EXPORT_SCORE = "Calibrated score"
+
+
+def priority_export(listing: pd.DataFrame, scores, source: str) -> pd.DataFrame:
+    """The priority list as downloaded: the listed columns, the calibrated score to three decimals placed
+    after "Risk band", and the score source. `scores` holds the calibrated score of each listed row, in order."""
+    out = listing.reset_index(drop=True)
+    out.insert(out.columns.get_loc("Risk band") + 1, EXPORT_SCORE, np.round(np.asarray(scores, dtype=float), 3))
+    return out.assign(score_source=source)
+
+
 def flag_outcome(scored: pd.DataFrame, flagged) -> FlagOutcome:
     """Precision, recall, caught and missed for a boolean flag, from the `at_risk` column of `scored`."""
     flagged = np.asarray(flagged, dtype=bool)
