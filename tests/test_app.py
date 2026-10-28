@@ -121,8 +121,8 @@ def test_main_tabs_hold_no_developer_text_and_about_holds_the_details(tables_env
     assert "docs/" not in about
 
 
-CARDS = ["Students in view", "Flagged for contact", "Precision of the flags", "Share of at-risk students reached"]
-LIST_COLUMNS = ["Rank", "Student ID", "Module", "Risk band", "Main reason", "Suggested support"]
+CARDS = ["Students in view", "Flagged for contact", "Precision", "At-risk reached"]
+LIST_COLUMNS = ["Rank", "Student ID", "Module", "Risk band", "Day 30 snapshot", "Main reason", "Suggested support"]
 
 
 def _listing(at):
@@ -152,11 +152,12 @@ def test_priority_list_is_populated_on_first_load(synthetic_env, matrix, small_f
     tab = at.main
     cards = {m.label: m.value for m in tab.metric}
     assert list(cards) == CARDS and all(m.help for m in tab.metric)
-    assert len(at.get("progress")) == 3                     # flagged share, precision and recall
+    kpi = _texts(tab)
+    assert kpi.count('class="kbar"><span') == 3 and kpi.count('class="kbar empty"') == 1   # one bar slot per card
     val = matrix[matrix["code_presentation"] == "2014J"]
     k = round(0.2 * len(val))
     assert cards["Students in view"] == f"{len(val):,}" and cards["Flagged for contact"] == f"{k:,}"
-    assert "Top 20% of 2014J by risk, all modules." in [c.value for c in tab.caption]
+    assert "Highest-risk 20% of 2014J, all modules." in [c.value for c in tab.caption]
     frame = _listing(at)
     listing = frame.value
     assert list(listing.columns) == LIST_COLUMNS and len(listing) == k
@@ -243,8 +244,8 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
         m = metrics[r["label"]]
         diff = r["difference"]
         assert m.value == f"{r['value']:,.0f}" and not m.delta
-        word = "same as" if diff == 0 else "above" if diff > 0 else "below"
-        assert f"{word} module median" in text and f"Module median: {r['median']:,.0f}" in text
+        word = "Same as" if diff == 0 else "Above" if diff > 0 else "Below"
+        assert f'pill-info">{word}</span>&nbsp; module median {r["median"]:,.0f}' in text
     assert "provisional" not in text.lower()
 
 
@@ -267,7 +268,7 @@ def test_module_filter_limits_the_list_and_the_cards(synthetic_env, matrix):
     assert set(listing["Module"]) <= {"AAA"}
     n = int(((matrix["code_presentation"] == "2014J") & (matrix["code_module"] == "AAA")).sum())
     assert {m.label: m.value for m in at.metric}["Students in view"] == f"{n:,}"
-    assert "Top 20% of 2014J by risk, module AAA." in _texts(at)
+    assert "Highest-risk 20% of 2014J, module AAA." in _texts(at)
 
 
 def test_lookup_uses_precomputed_explanations_when_present(synthetic_env, matrix):
@@ -329,12 +330,15 @@ def test_cohort_insights_shows_cards_charts_and_collapsed_tables(tables_env):
     for heading in ["### Risk bands by module", "### Student profiles", "### Retention funnel"]:
         assert heading in text
     dept = pd.read_csv(tables_env[0] / "data" / "processed" / "department_risk.csv")
-    dept = dept[(dept["code_presentation"] == "2014J") & (dept["code_module"] != "All modules")]
+    dept = dept[dept["code_presentation"] == "2014J"]
+    modules = sorted(set(dept["code_module"]) - {"All modules"})
     cards = {m.label: m.value for m in tab.metric}
-    assert list(cards) == [f"Module {m}" for m in sorted(dept["code_module"])]
+    assert list(cards) == ["All modules", *[f"Module {m}" for m in modules]]
     for _, row in dept.iterrows():
         expected = "n < 20" if row["suppressed"] else f"{row['at_risk_rate']:.0%}"
-        assert cards[f"Module {row['code_module']}"] == expected
+        label = "All modules" if row["code_module"] == "All modules" else f"Module {row['code_module']}"
+        assert cards[label] == expected and f"n = {int(row['students']):,} students" in text
+    assert text.count("Observed at-risk rate") >= len(cards)
     assert text.count('class="bandbar"') == int((~dept["suppressed"].astype(bool)).sum())
     assert not list(_outside_expanders(tab, "dataframe"))                   # tables only in collapsed sections
     assert [e.label for e in tab.expander] == ["What each profile means", "Data tables", "Model reliability",
@@ -401,7 +405,9 @@ def test_band_views_default_to_the_validation_presentation(tables_env):
     assert not at.exception
     text = _texts(at)
     assert at.selectbox(key="presentation").options == ["2014J (validation)"]
-    assert at.selectbox(key="presentation").value == "2014J" and not at.toggle(key="show_training").value
+    assert at.selectbox(key="presentation").value == "2014J"
+    assert not _go(at, "Overview").toggle(key="show_training").value
+    _go(at, "Modules")
     assert "Training presentations have in-sample scores" not in _texts(at.sidebar)
     assert "This is a training presentation" not in _texts(at.sidebar) and "Validated on" not in _texts(at.sidebar)
     dept = [df.value for df in at.dataframe if "High band" in df.value.columns][0]
@@ -426,7 +432,7 @@ def test_training_presentation_metrics_are_labelled_in_sample(synthetic_env):
     at = _open_training(AppTest.from_file(APP, default_timeout=120).run())
     assert not at.exception
     cards = {m.label: m for m in at.metric}
-    for label in ["Precision of the flags", "Share of at-risk students reached"]:
+    for label in ["Precision", "At-risk reached"]:
         assert cards[label].value == "Not shown"
         assert cards[label].help == "In-sample scores are optimistic and not informative."
     by_module = [df.value for df in at.dataframe if "Flagged share" in df.value.columns][0]
@@ -511,7 +517,7 @@ def test_capacity_can_apply_to_each_module(tables_env, matrix):
     val = matrix[matrix["code_presentation"] == "2014J"]
     for module, g in val.groupby("code_module"):
         assert by_module.loc[module, "Flagged"] == f"{round(0.2 * len(g)):,}"
-    assert "Top 20% of each module in 2014J by risk, all modules." in _texts(at)
+    assert "Highest-risk 20% of each module in 2014J, all modules." in _texts(at)
 
 
 def test_calibration_chart_replaces_the_histogram(tables_env, matrix, small_final):
@@ -704,10 +710,16 @@ def test_modules_page_charts_come_from_observed_outcomes(tables_env, matrix):
     at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Modules")
     assert not at.exception
     specs = {s["layout"]["title"]["text"]: s for s in _chart_specs(at) if s["layout"].get("title")}
-    intake = specs["Observed at-risk rate by intake, all modules"]["data"][0]
-    expected = views.at_risk_by_presentation(matrix)
-    assert intake["x"] == list(expected["code_presentation"])
-    assert intake["y"] == pytest.approx(list(expected["at_risk_rate"]))
+    traces = {t["name"]: t for t in specs["Observed at-risk rate by intake, all modules"]["data"]}
+    assert set(traces) == {"Validation", "Training"} and traces["Validation"]["x"] == ["2014J"]
+    assert traces["Validation"]["marker"]["color"] == "#7c6cff" and traces["Training"]["marker"]["color"] == "#4f8cff"
+    expected = views.at_risk_by_presentation(matrix).set_index("code_presentation")["at_risk_rate"]
+    got = {x: y for t in traces.values() for x, y in zip(t["x"], t["y"])}
+    assert sorted(got) == list(expected.index) and [got[p] for p in expected.index] == pytest.approx(list(expected))
+    funnel = [s for t, s in specs.items() if t.startswith("Students at each stage")][0]["data"][0]
+    assert funnel["textposition"] == "inside"
+    assert set(funnel["y"]) <= {"Registered", "Still registered at Day 30", "Active in the VLE", "Submission check met",
+                                "Did not withdraw", "Passed", "Submission check met (not applicable)"}
     activity = specs["Observed at-risk rate by days active by Day 30, 2014J, all modules"]["data"][0]
     buckets = views.at_risk_by_activity(matrix, "2014J")
     shown = buckets[~buckets["suppressed"]]
@@ -769,3 +781,31 @@ def test_no_page_shows_data_the_system_does_not_have(tables_env, matrix):
     assert not FORBIDDEN.search(text), FORBIDDEN.search(text)
     assert {b.label for b in at.get("button")} <= {"Show an example High-risk student",
                                                     "Show an example Low-risk student"}
+
+
+def test_sidebar_shows_each_control_only_where_it_applies(synthetic_env):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    expected = {"Overview": (True, True), "Student": (False, False), "Modules": (False, False),
+                "Support": (True, False), "About": (False, False)}
+    for page, (filters, advanced) in expected.items():
+        _go(at, page)
+        keys = {w.key for w in at.sidebar.selectbox} | {w.key for w in at.sidebar.slider}
+        assert "presentation" in keys and ({"module_filter", "capacity"} <= keys) == filters, page
+        assert any(e.label == "Advanced" for e in at.sidebar.expander) == advanced, page
+    assert [o.split()[-1] for o in at.radio(key="nav_page").options] == PAGES
+    assert _go(at, "Student").selectbox(key="lookup_module").label == "Module of the student"
+
+
+def test_review_table_has_a_day30_snapshot_column(synthetic_env, matrix):
+    from sar.service import views
+
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    listing = _listing(at).value
+    assert list(listing.columns) == LIST_COLUMNS
+    first = listing.iloc[0]
+    row = matrix[(matrix["code_presentation"] == "2014J") & (matrix["code_module"] == first["Module"])
+                 & (matrix["id_student"] == int(first["Student ID"]))].iloc[0]
+    days = int(row["active_days"])
+    assert first["Day 30 snapshot"] == (f"{days} active day{'' if days == 1 else 's'}, {int(row['n_missed'])} missed, "
+                                        f"{int(row['n_submitted'])} submitted")
+    assert views.MIN_CELL == 20

@@ -118,12 +118,22 @@ STYLE = """<style>
 .pill-info {color: #b9b2ff; background: rgba(124,108,255,0.16);}
 [class*="st-key-card-kpi"] [data-testid="stMetricValue"] {font-size: 2rem;}
 [class*="st-key-card-"] [data-testid="stMetric"] {padding: 0;}
+[class*="st-key-card-kpi"] {min-height: 11rem;}
+[class*="st-key-card-module"] {min-height: 9.5rem;}
+[class*="st-key-card-ind"] {min-height: 8.5rem;}
+.kbar {height: 6px; border-radius: 3px; background: rgba(154,163,199,0.18); overflow: hidden; margin-top: 0.4rem;}
+.kbar span {display: block; height: 100%; background: linear-gradient(90deg, #4f8cff, #7c6cff);}
+.kbar.empty {background: transparent;}
+[data-testid="stPlotlyChart"], [data-testid="stPlotlyChart"] > div,
+.js-plotly-plot .plotly .main-svg {background: transparent !important;}
 .bandbar {display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 0.3rem;}
 .bandbar span {display: block; height: 100%;}
 .page-subtitle {color: #9aa3c7; margin-top: -0.6rem;}
 .brand {font-size: 1.15rem; font-weight: 700; color: #e8ecff;}
-.st-key-nav [role="radiogroup"] {gap: 0.2rem;}
-.st-key-nav [role="radiogroup"] label {width: 100%; padding: 0.45rem 0.7rem; border-radius: 10px; margin: 0;}
+.st-key-nav [data-testid="stRadio"], .st-key-nav [role="radiogroup"] {width: 100%;}
+.st-key-nav [role="radiogroup"] {gap: 0.2rem; flex-direction: column;}
+.st-key-nav [role="radiogroup"] label {display: flex; align-items: center; justify-content: flex-start; width: 100%;
+       min-height: 2.5rem; box-sizing: border-box; padding: 0.45rem 0.8rem; border-radius: 10px; margin: 0;}
 .st-key-nav [role="radiogroup"] label > div:first-child {display: none;}
 .st-key-nav [role="radiogroup"] label:has(input:checked) {background: rgba(124,108,255,0.25);
        box-shadow: inset 3px 0 0 #7c6cff;}
@@ -136,7 +146,8 @@ pio.templates["sar_dark"] = go.layout.Template(layout=go.Layout(
     colorway=[ACCENT, ACCENT_2, BAND_COLOURS["Low"], BAND_COLOURS["Medium"], BAND_COLOURS["High"]],
     xaxis={"gridcolor": GRID, "zerolinecolor": GRID, "linecolor": GRID},
     yaxis={"gridcolor": GRID, "zerolinecolor": GRID, "linecolor": GRID},
-    legend={"bgcolor": "rgba(0,0,0,0)"}, hoverlabel={"bgcolor": "#131a33", "font": {"color": TEXT}}))
+    legend={"bgcolor": "rgba(0,0,0,0)", "orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
+    margin={"t": 80}, hoverlabel={"bgcolor": "#131a33", "font": {"color": TEXT}}))
 pio.templates.default = "plotly_dark+sar_dark"
 BAND_HELP = ("Risk bands come from the calibrated risk score: Low below the wide-net cutoff ({medium:.2f}), "
              "Medium from it, High from the top-20% cutoff ({high:.2f}). Both cutoffs were set on training data.")
@@ -155,7 +166,9 @@ APP_PURPOSE = "Day 30 early warning: who to contact first, why, and which suppor
 PAGES = ["Overview", "Student", "Modules", "Support", "About"]
 PAGE_ICONS = {"Overview": ":material/dashboard:", "Student": ":material/person:", "Modules": ":material/grid_view:",
               "Support": ":material/volunteer_activism:", "About": ":material/info:"}
-PAGE_STATE = ["lookup_module", "lookup_student", "funnel_module", "show_3d"]
+PAGE_STATE = ["lookup_module", "lookup_student", "funnel_module", "show_3d", "module_filter", "capacity",
+              "show_training", "flag_rule", "capacity_scope", "review_search", "review_band"]
+FLAG_PAGES = ("Overview", "Support")
 PAGE_SUBTITLES = {"Overview": "Who to contact first, and why.",
                   "Student": "Why one student is flagged, and which support fits.",
                   "Modules": "Risk bands, outcomes and engagement by module.",
@@ -177,6 +190,7 @@ SUPPORT_COLOURS = ["#7c6cff", "#4f8cff", "#35d0ba", "#ffb454", "#ff8fa3"]
 SUPPORT_NOTE = ("Suggestions are rule-based: they match the model's risk drivers to support types. OULAD has no "
                 "intervention records, so no outcome or effectiveness figures are shown.")
 NOT_SHOWN = "Not shown"
+NOT_YET = "Not available yet"
 IN_SAMPLE_HELP = "In-sample scores are optimistic and not informative."
 DISCLAIMER = "This is a model prediction. It supports, and does not replace, professional judgment."
 WRAP = 30  # characters per line of a factor label
@@ -201,6 +215,8 @@ DEPT_TRAINING_NOTE = ("Training presentation: the model learned from these stude
 IN_SAMPLE_NOTE = ("Training presentations have in-sample scores: the model learned from these students' outcomes, so "
                   "their scores and band shares look better than they would for a new intake.")
 SCORE_SOURCE = {"validation": f"validation ({TEST_PRESENTATION})", "training": "training (in-sample)"}
+FUNNEL_LABELS = {1: "Registered", 2: "Still registered at Day 30", 3: "Active in the VLE",
+                 4: "Submission check met", 5: "Did not withdraw", 6: "Passed"}
 FUNNEL_NOTE = ("Retrospective, descriptive view. Stages up to Day 30 use data available on Day 30; the last two "
                "stages use final outcomes, which are not model inputs. Each stage counts the students of the previous "
                "stage who also meet its condition. Where no assessment was due by Day 30, the submission stage is not "
@@ -364,9 +380,11 @@ def presentation_label(p: str) -> str:
     return f"{p} (validation)" if p == TEST_PRESENTATION else f"{p} (training, in-sample)"
 
 
-def sidebar(presentations: list[str], modules_of) -> View:
-    """App name, purpose and the shared controls. Training presentations appear only after the
-    Advanced toggle is on; the toggle's state is read first so the presentation list can follow it."""
+def sidebar(presentations: list[str], modules_of, page: str) -> View:
+    """The shared controls. Presentation always shows; module and contact capacity only on the pages that use
+    them (Overview, Support), and Advanced only on Overview. Elsewhere the module is All modules and the
+    other settings keep their last values. Training presentations appear only after the Advanced toggle is
+    on; the toggle's state is read first so the presentation list can follow it."""
     sb = st.sidebar
     training = [p for p in presentations if p != TEST_PRESENTATION]
     if TEST_PRESENTATION not in presentations:
@@ -378,17 +396,22 @@ def sidebar(presentations: list[str], modules_of) -> View:
     pres = sb.selectbox("Presentation", options, key="presentation", format_func=presentation_label,
                         help=f"{TEST_PRESENTATION} is the validation presentation. Training presentations are "
                              "available under Advanced.")
-    module = sb.selectbox("Module", [ALL_MODULES, *modules_of(pres)], key="module_filter")
-    rule = st.session_state.get("flag_rule", CAPACITY)
-    pct = sb.slider("Contact capacity", min_value=1, max_value=50, value=20, step=1, format="%d%%", key="capacity",
-                    disabled=rule == WIDE_NET,
-                    help="Share of the cohort the team can contact, highest risk first.")
-    with sb.expander("Advanced"):
-        if st.toggle("Show training presentations (in-sample scores)", key="show_training", disabled=not training):
-            st.caption(IN_SAMPLE_NOTE)
-        rule = st.radio("Flagging rule", [CAPACITY, WIDE_NET], key="flag_rule")
-        scope = st.radio("Capacity applies to", [SCOPE_COHORT, SCOPE_MODULE], key="capacity_scope",
-                         disabled=rule == WIDE_NET)
+    st.session_state.setdefault("capacity", 20)
+    module, rule = ALL_MODULES, st.session_state.get("flag_rule", CAPACITY)
+    pct, scope = st.session_state["capacity"], st.session_state.get("capacity_scope", SCOPE_COHORT)
+    if page in FLAG_PAGES:
+        module = sb.selectbox("Module", [ALL_MODULES, *modules_of(pres)], key="module_filter")
+        pct = sb.slider("Contact capacity", min_value=1, max_value=50, step=1, format="%d%%",
+                        key="capacity", disabled=rule == WIDE_NET,
+                        help="Share of the cohort the team can contact, highest risk first.")
+    if page == "Overview":
+        with sb.expander("Advanced"):
+            if st.toggle("Show training presentations (in-sample scores)", key="show_training",
+                         disabled=not training):
+                st.caption(IN_SAMPLE_NOTE)
+            rule = st.radio("Flagging rule", [CAPACITY, WIDE_NET], key="flag_rule")
+            scope = st.radio("Capacity applies to", [SCOPE_COHORT, SCOPE_MODULE], key="capacity_scope",
+                             disabled=rule == WIDE_NET)
     if is_training_presentation(pres):
         sb.warning(TRAINING_NOTE)
     return View(pres, module, pct / 100, rule, scope == SCOPE_MODULE)
@@ -400,7 +423,7 @@ def sidebar_nav() -> None:
     st.sidebar.caption(APP_PURPOSE)
     with st.sidebar.container(key="nav"):
         st.radio("Navigation", PAGES, key="nav_page", format_func=lambda p: f"{PAGE_ICONS[p]}  {p}",
-                 label_visibility="collapsed")
+                 label_visibility="collapsed", width="stretch")
 
 
 def band_pill(band: str) -> str:
@@ -408,7 +431,10 @@ def band_pill(band: str) -> str:
 
 
 def show_chart(fig) -> None:
-    """Every chart uses the app's dark Plotly template rather than Streamlit's chart theme."""
+    """Every chart uses the app's dark Plotly template rather than Streamlit's chart theme, with transparent
+    backgrounds so the card shows through, and the legend in a row above the plot."""
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0})
     st.plotly_chart(fig, width="stretch", theme=None)
 
 
@@ -449,7 +475,8 @@ if core_ok:
     fitted, cutoffs, metrics = final.fitted, final.fitted["cutoffs"], final.metrics
     edges = dict(risk_band_edges(cutoffs))
     ctl = sidebar(sorted(matrix["code_presentation"].unique()),
-                   lambda p: sorted(matrix.loc[matrix["code_presentation"] == p, "code_module"].unique()))
+                  lambda p: sorted(matrix.loc[matrix["code_presentation"] == p, "code_module"].unique()),
+                  st.session_state.get("nav_page", PAGES[0]))
 else:
     ctl = None
 
@@ -489,8 +516,8 @@ def why_chart(raising: pd.DataFrame, lowering: pd.DataFrame):
                              y=[lab for lab, p in zip(labels, part) if p], orientation="h", name=name,
                              marker_color=colour, customdata=top.loc[part, "phrase"].tolist(),
                              hovertemplate="%{customdata}: %{x:+.3f}<extra></extra>"))
-    fig.update_layout(title="What moves this score", height=CHART_HEIGHT, margin={"t": 50, "l": 10, "r": 10},
-                      xaxis_title=SHAP_SCALE, legend={"orientation": "h", "y": -0.2},
+    fig.update_layout(title="What moves this score", height=CHART_HEIGHT, margin={"t": 90, "l": 10, "r": 10},
+                      xaxis_title=SHAP_SCALE,
                       yaxis={"automargin": True, "categoryorder": "array", "categoryarray": labels})
     return fig
 
@@ -538,20 +565,27 @@ def student_header(sid: int, module: str, pres: str, me: pd.Series, rank: int, n
 
 
 def indicator_cards(pres: str, module: str, sid: int) -> None:
-    """Six Day 30 indicators, each with the module median and whether the student is above, below or the same."""
+    """Six Day 30 indicators in a 3 by 2 grid, each with its value and one line comparing it with the module
+    median for the same presentation."""
     values = snapshot(matrix, pres, module, sid, SNAPSHOT)
     for row_start in range(0, len(values), 3):
         cols = st.columns(3)
         for col, (f, r) in zip(cols, list(values.iterrows())[row_start:row_start + 3]):
             with col.container(border=True, key=f"card-ind-{f}"):
                 missing = pd.isna(r["value"])
-                st.metric(r["label"], "none yet" if missing else number(r["value"]),
+                st.metric(r["label"], NOT_YET if missing else number(r["value"]),
                           help=f"Module median in {pres}: {number(r['median'])}.")
-                if not missing:
+                median = f"module median {number(r['median'])}"
+                if missing:
+                    st.caption(_capital(median))
+                else:
                     diff = r["difference"]
-                    word = SAME_AS_MEDIAN if diff == 0 else "above module median" if diff > 0 else "below module median"
-                    st.markdown(f'<span class="pill pill-info">{word}</span>', unsafe_allow_html=True)
-                st.caption(f"Module median: {number(r['median'])}")
+                    word = "Same as" if diff == 0 else "Above" if diff > 0 else "Below"
+                    st.markdown(f'<span class="pill pill-info">{word}</span>&nbsp; {median}', unsafe_allow_html=True)
+
+
+def _capital(text: str) -> str:
+    return text[:1].upper() + text[1:]
 
 
 def support_line(expl, s) -> str:
@@ -646,7 +680,7 @@ def page_student() -> None:
         bar = st.container(horizontal=True, vertical_alignment="bottom")
         bar.button("Show an example High-risk student", key="example_high", on_click=show_example, args=("High",))
         bar.button("Show an example Low-risk student", key="example_low", on_click=show_example, args=("Low",))
-        module = bar.selectbox("Module", sorted(in_pres["code_module"].unique()), key="lookup_module")
+        module = bar.selectbox("Module of the student", sorted(in_pres["code_module"].unique()), key="lookup_module")
         ids = sorted(in_pres.loc[in_pres["code_module"] == module, "id_student"].unique())
         if st.session_state.get("lookup_student") not in ids:
             st.session_state.pop("lookup_student", None)
@@ -673,32 +707,36 @@ def band_bar(row) -> str:
 
 
 def module_cards(dept_part: pd.DataFrame) -> None:
-    """One card per module: students, observed at-risk rate and a thin stacked bar of the band shares."""
-    rows = dept_part[dept_part["code_module"] != ALL_MODULES].sort_values("code_module")
+    """An "All modules" card, then one card per module, four per row: observed at-risk rate, number of
+    students and a thin stacked bar of the band shares. Groups under MIN_CELL students show n < MIN_CELL."""
+    rows = pd.concat([dept_part[dept_part["code_module"] == ALL_MODULES],
+                      dept_part[dept_part["code_module"] != ALL_MODULES].sort_values("code_module")])
     per_row = 4
     for start in range(0, len(rows), per_row):
         cols = st.columns(per_row)
         for col, (_, row) in zip(cols, rows.iloc[start:start + per_row].iterrows()):
-            with col.container(border=True, key=f"card-module-{row['code_module']}"):
+            code = row["code_module"]
+            with col.container(border=True, key=f"card-module-{code.replace(' ', '-')}"):
                 hidden = bool(row["suppressed"])
-                st.metric(f"Module {row['code_module']}", SMALL if hidden else f"{row['at_risk_rate']:.0%}",
+                st.metric(ALL_MODULES if code == ALL_MODULES else f"Module {code}",
+                          SMALL if hidden else f"{row['at_risk_rate']:.0%}",
                           help="Observed at-risk rate: share of students whose final outcome was Fail or Withdrawn.")
-                if hidden:
-                    st.caption(f"Fewer than {MIN_CELL} students, so no figures are shown.")
-                else:
-                    st.caption(f"{int(row['students']):,} students. Observed at-risk rate.")
-                    st.markdown(band_bar(row), unsafe_allow_html=True)
+                st.caption(f"n = {int(row['students']):,} students" if pd.notna(row["students"]) else SMALL)
+                st.caption("Observed at-risk rate")
+                st.markdown('<div class="bandbar"></div>' if hidden else band_bar(row), unsafe_allow_html=True)
 
 
 def intake_chart(table: pd.DataFrame, scope: str):
     shown = table[~table["suppressed"]]
-    fig = go.Figure(go.Bar(x=shown["code_presentation"].tolist(), y=shown["at_risk_rate"].tolist(),
-                           marker_color=[ACCENT if p == TEST_PRESENTATION else ACCENT_2
-                                         for p in shown["code_presentation"]],
-                           text=[f"{r:.0%}<br>n = {n:,}" for r, n in zip(shown["at_risk_rate"], shown["students"])],
-                           textposition="outside"))
-    fig.update_layout(title=f"Observed at-risk rate by intake, {scope}", yaxis_tickformat=".0%", yaxis_range=[0, 1.1],
-                      yaxis_title="Observed at-risk rate", xaxis_title="Presentation", margin={"t": 50},
+    fig = go.Figure()
+    for name, colour, is_val in [("Validation", ACCENT, True), ("Training", ACCENT_2, False)]:
+        part = shown[(shown["code_presentation"] == TEST_PRESENTATION) == is_val]
+        fig.add_trace(go.Bar(name=name, x=part["code_presentation"].tolist(), y=part["at_risk_rate"].tolist(),
+                             marker_color=colour, textposition="outside", cliponaxis=False,
+                             text=[f"{r:.0%}<br>n = {n:,}" for r, n in zip(part["at_risk_rate"], part["students"])]))
+    fig.update_layout(title=f"Observed at-risk rate by intake, {scope}", yaxis_tickformat=".0%", yaxis_range=[0, 1.15],
+                      yaxis_title="Observed at-risk rate", xaxis_title="Presentation", margin={"t": 90},
+                      xaxis={"categoryorder": "array", "categoryarray": shown["code_presentation"].tolist()},
                       height=CHART_HEIGHT)
     return fig
 
@@ -729,7 +767,7 @@ def band_chart(part: pd.DataFrame, pres: str):
                             marker_color=BAND_COLOURS[b], texttemplate="%{y:.0%}", textposition="inside")
                      for s, b in bands.items()])
     fig.update_layout(barmode="stack", yaxis_title="Share of students", yaxis_tickformat=".0%", height=CHART_HEIGHT,
-                      margin={"t": 50}, legend={"orientation": "h"}, xaxis_title="Module",
+                      margin={"t": 90}, xaxis_title="Module",
                       title=f"Share of students in each risk band by module, {pres}")
     return fig
 
@@ -751,9 +789,14 @@ def funnel_view(fun: pd.DataFrame, pres: str, module: str):
     part = part.assign(stage=part["stage"].where(part["applicable"].astype(bool),
                                                  part["stage"] + " (not applicable)"))
     shown = shown_rows(part)
-    fig = go.Figure(go.Funnel(y=shown["stage"].tolist(), x=shown["students"].astype(float).tolist(),
-                              marker_color=gradient(len(shown)), texttemplate="%{value:,.0f} (%{percentInitial:.0%})"))
-    fig.update_layout(height=CHART_HEIGHT, margin={"t": 50}, separators=".,", showlegend=False,
+    labels = [FUNNEL_LABELS.get(o, s) + ("" if a else " (not applicable)")
+              for o, s, a in zip(shown["stage_order"], shown["stage"], shown["applicable"].astype(bool))]
+    fig = go.Figure(go.Funnel(y=labels, x=shown["students"].astype(float).tolist(), marker_color=gradient(len(shown)),
+                              texttemplate="%{value:,.0f} (%{percentInitial:.0%})", textposition="inside",
+                              insidetextanchor="middle", customdata=shown["stage"].tolist(),
+                              hovertemplate="%{customdata}: %{value:,.0f}<extra></extra>"))
+    fig.update_layout(height=CHART_HEIGHT, margin={"t": 60, "l": 10, "r": 10}, separators=".,", showlegend=False,
+                      yaxis={"automargin": True},
                       title=f"Students at each stage (retrospective), {module}, {pres}")
     notes = ["Retrospective: the last two stages use final outcomes, which are not model inputs."]
     carried = in_pres[~in_pres["applicable"].astype(bool)]
@@ -792,10 +835,11 @@ def calibration_chart():
                              line={"color": MUTED, "dash": "dash"}))
     fig.add_trace(go.Scatter(x=cal["mean_score"].tolist(), y=cal["observed_rate"].tolist(), mode="markers+lines+text",
                              name="Observed", marker={"color": ACCENT, "size": 9}, line={"color": ACCENT},
-                             text=[f"{n:,}" for n in cal["students"]], textposition="top left"))
+                             text=[f"{n:,}" for n in cal["students"]], textposition="top center", cliponaxis=False))
     fig.update_layout(xaxis_title="Mean calibrated risk score", yaxis_title="Observed at-risk rate",
                       xaxis_range=[0, 1], yaxis_range=[0, 1], xaxis_tickformat=".0%", yaxis_tickformat=".0%",
-                      height=CHART_HEIGHT, margin={"t": 50}, legend={"orientation": "h"},
+                      height=CHART_HEIGHT, margin={"t": 90, "l": 60}, xaxis_automargin=True,
+                      yaxis_automargin=True,
                       title=f"Observed at-risk rate against calibrated score, {TEST_PRESENTATION}")
     return fig
 
@@ -834,45 +878,51 @@ def page_modules() -> None:
     if matrix_l.ok:
         with left.container(border=True, key="card-activity"):
             show_chart(activity_chart(at_risk_by_activity(matrix_l.value, pres, one), pres, scope))
-            st.caption(f"Groups with fewer than {MIN_CELL} students are not shown.")
-    fun_status = get_table("retention_funnel", processed)
-    funnel_table = funnel_module = None
-    with right:
-        st.markdown("### Retention funnel", help=FUNNEL_NOTE)
-        if not fun_status.ok:
-            status_card(fun_status)
-        else:
-            with st.container(border=True, key="card-funnel"):
-                fun = fun_status.table
-                options = [ALL_MODULES,
-                           *sorted(set(fun.loc[fun["code_presentation"] == pres, "code_module"]) - {ALL_MODULES})]
-                default = options.index(module) if module in options else 0
-                if "funnel_module" in st.session_state:
-                    funnel_module = st.selectbox("Module", options, key="funnel_module")
-                else:
-                    funnel_module = st.selectbox("Module", options, index=default, key="funnel_module")
-                fig, note, funnel_table = funnel_view(fun, pres, funnel_module)
-                show_chart(fig)
-                st.caption(note)
-
+            st.caption(f"Days active count every day with site activity up to Day {CUTOFF_DAY}, including days "
+                       f"before the module starts. Groups with fewer than {MIN_CELL} students are not shown.")
     prof_status = get_table("student_profiles", processed)
-    st.markdown("### Student profiles", help=PROFILE_NOTE.format(val=TEST_PRESENTATION))
-    prof_part = None
-    if not prof_status.ok:
-        status_card(prof_status)
-    else:
-        with st.container(border=True, key="card-profiles"):
-            prof = prof_status.table
-            kind = "training" if in_sample and "training" in set(prof["scope"]) else "validation"
-            scope_label = "training presentations" if kind == "training" else TEST_PRESENTATION
-            prof_part = prof[prof["scope"] == kind].sort_values("at_risk_rate", ascending=False, na_position="last")
-            shown = shown_rows(prof_part)
-            show_chart(profile_chart(shown, scope_label))
-            if kind == "training":
-                st.caption("Shown for the training presentations together, the rows the clusters were fitted on.")
+    prof_part = shown = None
+    with right:
+        if not prof_status.ok:
+            st.markdown("### Student profiles", help=PROFILE_NOTE.format(val=TEST_PRESENTATION))
+            status_card(prof_status)
+        else:
+            with st.container(border=True, key="card-profiles"):
+                st.markdown("### Student profiles", help=PROFILE_NOTE.format(val=TEST_PRESENTATION))
+                prof = prof_status.table
+                kind = "training" if in_sample and "training" in set(prof["scope"]) else "validation"
+                scope_label = "training presentations" if kind == "training" else TEST_PRESENTATION
+                prof_part = prof[prof["scope"] == kind].sort_values("at_risk_rate", ascending=False,
+                                                                     na_position="last")
+                shown = shown_rows(prof_part)
+                show_chart(profile_chart(shown, scope_label))
+                if kind == "training":
+                    st.caption("Shown for the training presentations together, the rows the clusters were fitted "
+                               "on.")
+    if shown is not None:
         with st.expander("What each profile means"):
             for _, row in shown.iterrows():
                 st.markdown(f"**{row['profile']}**: {row['description']}")
+
+    fun_status = get_table("retention_funnel", processed)
+    funnel_table = funnel_module = None
+    if not fun_status.ok:
+        st.markdown("### Retention funnel", help=FUNNEL_NOTE)
+        status_card(fun_status)
+    else:
+        with st.container(border=True, key="card-funnel"):
+            st.markdown("### Retention funnel", help=FUNNEL_NOTE)
+            fun = fun_status.table
+            in_pres = set(fun.loc[fun["code_presentation"] == pres, "code_module"])
+            options = [ALL_MODULES, *sorted(in_pres - {ALL_MODULES})]
+            default = options.index(module) if module in options else 0
+            if "funnel_module" in st.session_state:
+                funnel_module = st.selectbox("Module", options, key="funnel_module")
+            else:
+                funnel_module = st.selectbox("Module", options, index=default, key="funnel_module")
+            fig, note, funnel_table = funnel_view(fun, pres, funnel_module)
+            show_chart(fig)
+            st.caption(note)
 
     with st.expander("Data tables"):
         if dept_part is not None:
@@ -941,7 +991,7 @@ def rule_caption(c: View) -> str:
         cut = cutoffs["wide_net"]["score"]
         return f"Wide net: calibrated risk score of at least {cut:.2f}, {c.presentation}, {where}."
     whose = f"each module in {c.presentation}" if c.per_module else c.presentation
-    return f"Top {c.share:.0%} of {whose} by risk, {where}."
+    return f"Highest-risk {c.share:.0%} of {whose}, {where}."
 
 
 @dataclass
@@ -966,12 +1016,18 @@ def flag_state(c: View) -> FlagState:
     return FlagState(scored, in_view, flag_outcome(in_view, in_view["flagged"]), flagged, details)
 
 
-def kpi_card(col, key: str, icon: str, label: str, value: str, help: str | None, share: float | None = None) -> None:
-    """A KPI card: icon, value and label, and a thin bar where the value is a share."""
+def kpi_card(col, key: str, icon: str, label: str, value: str, caption: str, help: str | None,
+             share: float | None = None) -> None:
+    """A KPI card with the same slots in every card: label, value, one caption line and a bar area that is
+    kept, empty, when the value is not a share."""
     with col.container(border=True, key=f"card-kpi-{key}"):
         st.metric(label, value, help=help, icon=icon)
-        if share is not None and not np.isnan(share):
-            st.progress(float(min(max(share, 0.0), 1.0)))
+        st.caption(caption)
+        if share is None or np.isnan(share):
+            st.markdown('<div class="kbar empty"></div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="kbar"><span style="width:{min(max(share, 0.0), 1.0):.1%}"></span></div>',
+                        unsafe_allow_html=True)
 
 
 def distribution_chart(in_view: pd.DataFrame):
@@ -982,9 +1038,9 @@ def distribution_chart(in_view: pd.DataFrame):
     fig = go.Figure(go.Pie(labels=labels, values=counts.tolist(), hole=0.62, sort=False,
                            marker={"colors": [BAND_COLOURS[b] for b in BAND_ORDER]}, textinfo="none",
                            hovertemplate="%{label}<extra></extra>"))
-    fig.update_layout(title="Risk distribution", legend={"orientation": "v", "x": 1.0, "y": 0.5},
+    fig.update_layout(title="Risk distribution",
                       annotations=[{"text": f"<b>{total:,}</b><br>students", "showarrow": False, "font": {"size": 18}}],
-                      margin={"t": 50, "b": 20, "l": 10, "r": 10})
+                      margin={"t": 90, "b": 20, "l": 10, "r": 10})
     return fig
 
 
@@ -1001,12 +1057,20 @@ def reasons_chart(counts: pd.Series, flagged: int):
     return fig
 
 
+def day30_snapshots(students: pd.DataFrame) -> list[str]:
+    """One short line of Day 30 facts per student, from the feature matrix, in the order of `students`."""
+    rows = students[KEY].merge(matrix[KEY + ["active_days", "n_missed", "n_submitted"]], on=KEY, how="left")
+    return [f"{a:.0f} active day{'' if a == 1 else 's'}, {m:.0f} missed, {n:.0f} submitted"
+            for a, m, n in zip(rows["active_days"], rows["n_missed"], rows["n_submitted"])]
+
+
 def review_table(fs: FlagState, pres: str) -> None:
     """The ranked flagged students, filtered by student ID and band; selecting a row opens the student."""
     details = fs.details
     listing = pd.DataFrame({
         "Rank": range(1, len(fs.flagged) + 1), "Student ID": fs.flagged["id_student"].astype(str).to_numpy(),
         "Module": fs.flagged["code_module"].to_numpy(), "Risk band": fs.flagged["band"].astype(str).to_numpy(),
+        "Day 30 snapshot": day30_snapshots(fs.flagged),
         "Main reason": [short_reason(r) if p else r for r, p in zip(details["main_reason"], details["prepared"])],
         "Suggested support": details["suggested_support"].to_numpy()})
     keys = list(zip(fs.flagged["code_module"], fs.flagged["id_student"].astype(int)))
@@ -1029,6 +1093,7 @@ def review_table(fs: FlagState, pres: str) -> None:
                                     "Student ID": st.column_config.TextColumn(width="small"),
                                     "Module": st.column_config.TextColumn(width="small"),
                                     "Risk band": st.column_config.TextColumn(width="small"),
+                                    "Day 30 snapshot": st.column_config.TextColumn(width="medium"),
                                     "Main reason": st.column_config.TextColumn(width="medium"),
                                     "Suggested support": st.column_config.TextColumn(width="medium")})
     if not details["prepared"].all():
@@ -1047,24 +1112,29 @@ def page_overview() -> None:
     fs = flag_state(ctl)
     outcome = fs.outcome
     cards = st.columns(4)
+    where = "all modules" if ctl.module == ALL_MODULES else f"module {ctl.module}"
     kpi_card(cards[0], "students", ":material/groups:", "Students in view", f"{outcome.students:,}",
-             "Students in the selected presentation and module.")
+             f"{pres}, {where}", "Students in the selected presentation and module.")
     kpi_card(cards[1], "flagged", ":material/flag:", "Flagged for contact", f"{outcome.flagged:,}",
-             (f"{outcome.flagged / outcome.students:.0%} of the students in view, highest risk first."
-              if outcome.students else None), outcome.flagged / outcome.students if outcome.students else None)
+             f"{outcome.flagged / outcome.students:.0%} of students in view" if outcome.students else DASH,
+             "Flagged students in view, highest risk first.",
+             outcome.flagged / outcome.students if outcome.students else None)
     if in_sample:
-        kpi_card(cards[2], "precision", ":material/target:", "Precision of the flags", NOT_SHOWN, IN_SAMPLE_HELP)
-        kpi_card(cards[3], "recall", ":material/how_to_reg:", "Share of at-risk students reached", NOT_SHOWN,
+        kpi_card(cards[2], "precision", ":material/target:", "Precision", NOT_SHOWN, "In-sample presentation",
+                 IN_SAMPLE_HELP)
+        kpi_card(cards[3], "recall", ":material/how_to_reg:", "At-risk reached", NOT_SHOWN, "In-sample presentation",
                  IN_SAMPLE_HELP)
     else:
-        kpi_card(cards[2], "precision", ":material/target:", "Precision of the flags",
+        kpi_card(cards[2], "precision", ":material/target:", "Precision",
                  DASH if outcome.flagged == 0 else f"{outcome.precision:.0%}",
-                 f"{outcome.caught:,} of the {outcome.flagged:,} flagged students went on to fail or withdraw.",
+                 f"{outcome.caught:,} of {outcome.flagged:,} flagged went on to fail or withdraw",
+                 "Share of the flagged students who went on to fail or withdraw.",
                  None if outcome.flagged == 0 else outcome.precision)
-        kpi_card(cards[3], "recall", ":material/how_to_reg:", "Share of at-risk students reached",
+        kpi_card(cards[3], "recall", ":material/how_to_reg:", "At-risk reached",
                  DASH if outcome.at_risk == 0 else f"{outcome.recall:.0%}",
-                 f"{outcome.caught:,} of the {outcome.at_risk:,} students who went on to fail or withdraw are "
-                 f"flagged; {outcome.missed:,} are not.", None if outcome.at_risk == 0 else outcome.recall)
+                 f"{outcome.caught:,} of {outcome.at_risk:,} at-risk students flagged",
+                 f"Share of the students who went on to fail or withdraw who are flagged; {outcome.missed:,} are not.",
+                 None if outcome.at_risk == 0 else outcome.recall)
     st.caption(rule_caption(ctl))
 
     left, right = st.columns(2)
@@ -1117,8 +1187,7 @@ def support_module_chart(table: pd.DataFrame):
     fig = go.Figure([go.Bar(name=t, x=table.index.tolist(), y=table[t].tolist(), marker_color=c)
                      for t, c in zip(table.columns, SUPPORT_COLOURS) if table[t].sum()])
     fig.update_layout(barmode="stack", title="Primary suggestion by module", xaxis_title="Module",
-                      yaxis_title="Flagged students", legend={"orientation": "h", "y": -0.25},
-                      height=CHART_HEIGHT, margin={"t": 50})
+                      yaxis_title="Flagged students", height=CHART_HEIGHT, margin={"t": 90})
     return fig
 
 
