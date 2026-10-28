@@ -114,6 +114,7 @@ def test_main_tabs_hold_no_developer_text_and_about_holds_the_details(tables_env
     bands = _tab(at, "About").dataframe[0].value
     assert list(bands["Band"]) == ["Low", "Medium", "High"] and "Capacity flagging" in about
     assert "rule-based" in about and "no interventions" in about
+    assert "### Reading the Student page" in about and "not a personal probability" in about
     assert '"This dataset is released under CC-BY 4.0 license."' in about
     assert "doi: 10.1038/sdata.2017.171 (2017)." in about
     assert "Model built (UTC)" in about and "python scripts/build_team_tables.py" in about
@@ -745,13 +746,24 @@ def test_support_page_counts_the_primary_suggestion_of_each_flagged_student(synt
     counts = priority.support_counts(supports)
     _go(at, "Support")
     cards = {m.label: m.value for m in at.main.metric}
-    assert list(cards) == [title for title, _ in INTERVENTIONS.values()]
-    assert all(cards[t] == f"{counts[t]:,}" for t in cards)
+    titles = [title for title, _ in INTERVENTIONS.values()]
+    assert sorted(cards) == sorted(titles) and all(cards[t] == f"{counts[t]:,}" for t in cards)
+    values = [counts[t] for t in cards]
+    assert values == sorted(values, reverse=True)                             # ordered by count
     text = _texts(at.main)
     assert "rule-based" in text and "OULAD has no intervention records" in text
     assert all(definition in text for _, definition in INTERVENTIONS.values())
-    by_module = [s for s in _chart_specs(at) if s["layout"]["title"]["text"] == "Primary suggestion by module"][0]
+    for name, (title, _) in INTERVENTIONS.items():
+        assert (priority.never_first(name) in text) == (counts[title] == 0)
+    flagged = int(counts.sum())
+    top = counts.drop(priority.NO_SUPPORT).idxmax()
+    assert ("Most flagged students" in text) == (counts[top] > flagged / 2)
+    specs = {s["layout"]["title"]["text"]: s for s in _chart_specs(at)}
+    by_module = specs["Primary suggestion by module"]
     assert sum(sum(t["y"]) for t in by_module["data"]) == int(counts.drop(priority.NO_SUPPORT).sum())
+    colours = {t["marker"]["color"] for t in by_module["data"]}
+    colours |= set(specs["Primary suggestion among flagged students"]["data"][0]["marker"]["color"])
+    assert not colours & {"#ff5d73", "#ffb454", "#35d0ba"}                     # never a band colour
     assert views.MIN_CELL == 20
 
 

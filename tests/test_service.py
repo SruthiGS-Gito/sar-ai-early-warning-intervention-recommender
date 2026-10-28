@@ -323,3 +323,21 @@ def test_at_risk_by_activity_uses_the_day_buckets_and_hides_small_ones(matrix):
     assert table.loc[small, "at_risk_rate"].isna().all() and table.loc[small, "suppressed"].all()
     if not small.iloc[0]:
         assert table.loc[0, "at_risk_rate"] == pytest.approx(zero["at_risk"].mean())
+
+
+def test_band_outcome_uses_the_module_and_falls_back_when_small(matrix, small_final):
+    scored = views.score_presentation(small_final[0], matrix, "2014J")
+    ev = views.band_evidence(scored)
+    for module in sorted(scored["code_module"].unique()):
+        for band in ["Low", "Medium", "High"]:
+            rate, n, scope = views.band_outcome(scored, module, band)
+            cell = ev[(ev["code_module"] == module) & (ev["band"] == band)].iloc[0]
+            if cell["students"] >= views.MIN_CELL:
+                assert (scope, n) == (module, cell["students"]) and rate == pytest.approx(cell["at_risk_rate"])
+            else:
+                whole = ev[(ev["code_module"] == "All modules") & (ev["band"] == band)].iloc[0]
+                assert scope == "All modules" and n == whole["students"]
+    tiny = scored[scored["code_module"] == "AAA"].head(5)
+    rate, n, scope = views.band_outcome(pd.concat([tiny, scored[scored["code_module"] != "AAA"]]), "AAA",
+                                        str(tiny["band"].iloc[0]))
+    assert scope == "All modules" and n >= views.MIN_CELL

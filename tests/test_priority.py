@@ -157,3 +157,14 @@ def test_support_counts_keep_every_type_in_order():
     assert list(counts.index) == [label(n) for n in INTERVENTIONS] + [priority.NO_SUPPORT]
     assert counts["Tutoring"] == 2 and counts["Weekly check-ins"] == 1 and counts["Mentoring"] == 0
     assert counts.sum() == 4
+
+
+def test_never_first_names_the_mapped_inputs_and_the_sharing_types():
+    from sar.recommend.interventions import FEATURE_TO_INTERVENTIONS, INTERVENTIONS, label
+
+    for name in INTERVENTIONS:
+        text = priority.never_first(name)
+        own = [f for f, w in FEATURE_TO_INTERVENTIONS.items() if name in w]
+        sharing = {label(o) for f in own for o in FEATURE_TO_INTERVENTIONS[f] if o != name}
+        assert all(t in text for t in sharing) and label(name) not in text.split(", which")[1]
+    assert "study load and registration timing" in priority.never_first("financial_aid_referral")

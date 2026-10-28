@@ -62,6 +62,7 @@ from sar.service.priority import (  # noqa: E402
     NO_SUPPORT,
     chart_factors,
     for_reasons,
+    never_first,
     primary_for,
     priority_details,
     reason_counts,
@@ -186,7 +187,9 @@ RING_HELP = ("A group statistic from the validation presentation: the share of s
              "whose final outcome was Fail or Withdrawn. It is not a personal probability.")
 SHAP_SCALE = "Change in the raw forest score (probability points, before calibration)"
 GROUP_NAMES = {"behaviour": "Behaviour", "study": "Study", "course": "Course", "background": "Background"}
-SUPPORT_COLOURS = ["#7c6cff", "#4f8cff", "#35d0ba", "#ffb454", "#ff8fa3"]
+# Support types use violets and blues only, so no type can be read as a risk band.
+SUPPORT_COLOURS = {"Tutoring": "#7c6cff", "Peer tutoring": "#c084fc", "Mentoring": "#a5b4fc",
+                   "Weekly check-ins": "#38bdf8", "Financial aid referral": "#4f8cff"}
 SUPPORT_NOTE = ("Suggestions are rule-based: they match the model's risk drivers to support types. OULAD has no "
                 "intervention records, so no outcome or effectiveness figures are shown.")
 NOT_SHOWN = "Not shown"
@@ -1175,7 +1178,8 @@ def page_overview() -> None:
 def support_bar_chart(counts: pd.Series):
     shown = counts[counts > 0].sort_values()
     total = int(counts.sum())
-    fig = go.Figure(go.Bar(x=shown.tolist(), y=shown.index.tolist(), orientation="h", marker_color=ACCENT,
+    fig = go.Figure(go.Bar(x=shown.tolist(), y=shown.index.tolist(), orientation="h",
+                           marker_color=[SUPPORT_COLOURS[t] for t in shown.index],
                            text=[f"{n:,} ({n / total:.0%})" for n in shown], textposition="outside"))
     fig.update_layout(title="Primary suggestion among flagged students", xaxis_title="Flagged students",
                       xaxis_range=[0, float(shown.max()) * 1.3 if len(shown) else 1], yaxis={"automargin": True},
@@ -1185,7 +1189,7 @@ def support_bar_chart(counts: pd.Series):
 
 def support_module_chart(table: pd.DataFrame):
     fig = go.Figure([go.Bar(name=t, x=table.index.tolist(), y=table[t].tolist(), marker_color=c)
-                     for t, c in zip(table.columns, SUPPORT_COLOURS) if table[t].sum()])
+                     for t in table.columns if table[t].sum() for c in [SUPPORT_COLOURS[t]]])
     fig.update_layout(barmode="stack", title="Primary suggestion by module", xaxis_title="Module",
                       yaxis_title="Flagged students", height=CHART_HEIGHT, margin={"t": 90})
     return fig
@@ -1206,7 +1210,11 @@ def page_support() -> None:
     flagged = int(counts.sum())
     st.caption(f"{rule_caption(ctl)} {flagged:,} flagged students, counted by the support type suggested first "
                "for each.")
-    names = list(INTERVENTIONS)
+    top = counts.drop(NO_SUPPORT).idxmax()
+    if counts[top] > flagged / 2:
+        st.markdown(f"Most flagged students ({counts[top] / flagged:.0%}) share the same primary suggestion, {top}, "
+                    "because the rules map a small set of Day 30 drivers to a few support types.")
+    names = sorted(INTERVENTIONS, key=lambda n: (-counts[INTERVENTIONS[n][0]], list(INTERVENTIONS).index(n)))
     for start in range(0, len(names), 3):
         cols = st.columns(3)
         for col, name in zip(cols, names[start:start + 3]):
@@ -1214,6 +1222,8 @@ def page_support() -> None:
             with col.container(border=True, key=f"card-support-{name}"):
                 st.metric(title, f"{counts[title]:,}", help="Flagged students whose primary suggestion is this type.")
                 st.caption(definition)
+                if counts[title] == 0:
+                    st.caption(never_first(name))
     if counts[NO_SUPPORT]:
         st.caption(f"{counts[NO_SUPPORT]:,} flagged students have no input that raises the score noticeably, so no "
                    "support type is matched.")
@@ -1221,7 +1231,7 @@ def page_support() -> None:
     with left.container(border=True, key="card-support-counts"):
         show_chart(support_bar_chart(counts.drop(NO_SUPPORT)))
     by_module = pd.crosstab(fs.flagged["code_module"].to_numpy(), fs.details["suggested_support"].to_numpy())
-    by_module = by_module.reindex(columns=[INTERVENTIONS[n][0] for n in names], fill_value=0)
+    by_module = by_module.reindex(columns=[INTERVENTIONS[n][0] for n in INTERVENTIONS], fill_value=0)
     with right.container(border=True, key="card-support-modules"):
         show_chart(support_module_chart(by_module))
     with st.container(border=True, key="card-support-note"):
@@ -1309,6 +1319,21 @@ def page_about() -> None:
                         f"- Student profiles: {PROFILE_NOTE.format(val=TEST_PRESENTATION)}\n"
                         f"- Retention funnel: {FUNNEL_NOTE}")
 
+        with st.container(border=True, key="card-about-student"):
+            st.markdown("### Reading the Student page")
+            st.markdown(
+                f"- The ring shows the observed outcome of the student's band in their module in {val}: the share "
+                "of those students whose final outcome was Fail or Withdrawn. It is a group statistic, not a "
+                f"personal probability. Where the band has fewer than {MIN_CELL} students in the module, the band's "
+                "rate across all modules is shown and the caption says so. Training presentations show the band "
+                "only.\n"
+                "- The factor chart shows up to four inputs that raise the score and up to two that lower it, in "
+                "the raw forest score (probability points, before calibration). The calibrated score, which is "
+                "calibrated across all modules, is shown once under Why this score.\n"
+                "- Similar earlier students are matched on Day 30 inputs, not on the model's score, so their share "
+                "can differ from the band's outcome.\n"
+                "- A Low-band student gets a suggestion only for a missed assessment or a spell without activity.")
+
         with st.container(border=True, key="card-about-6"):
             st.markdown("### Capacity flagging")
             st.write("The Overview list ranks the chosen cohort by calibrated risk (ties broken by the forest's raw "
@@ -1334,6 +1359,10 @@ def page_about() -> None:
             val_scored = val_scored.assign(flagged=flag_capacity(val_scored, 0.2).flagged)
             recall = batch_summary(val_scored, outcomes=True).drop(index=ALL_MODULES)["Recall"].sort_values()
             lowest = "; ".join(f"{m} {r:.0%}" for m, r in recall.head(2).items())
+            in_val = matrix[matrix["code_presentation"] == val]
+            scored_in = in_val[in_val["mean_score"].notna()]
+            gap = (scored_in["weighted_score"].isna()).groupby(scored_in["code_module"]).mean()
+            weightless = ", ".join(gap[gap > 0.5].index)
             st.markdown(
                 "- Support suggestions are rule-based: they match the model's risk drivers to support types and have "
                 "not been tested as interventions.\n"
@@ -1341,8 +1370,11 @@ def page_about() -> None:
                 "unknown.\n"
                 f"- In some modules no assessment is due by Day {CUTOFF_DAY} ({no_due}), so the model has no early "
                 "scores there.\n"
-                f"- With 20% capacity across the whole cohort on {val}, the lowest module recall is {lowest} (share of "
-                "the module's at-risk students who are flagged); capacity can apply to each module instead "
+                + (f"- In {weightless} the assessments due by Day {CUTOFF_DAY} carry no weight, so students there "
+                   "have an average score but no weighted score. That gap is not used as a reason or a support "
+                   "trigger.\n" if weightless else "")
+                + f"- With 20% capacity across the whole cohort on {val}, the lowest module recall is {lowest} "
+                "(share of the module's at-risk students who are flagged); capacity can apply to each module instead "
                 "(sidebar, Advanced).\n"
                 + (f"- Recall differs between groups at the top-20% cutoff on {val}: {'; '.join(gaps)}.\n"
                    if gaps else "")

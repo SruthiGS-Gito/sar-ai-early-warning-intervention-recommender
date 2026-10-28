@@ -220,3 +220,22 @@ def support_counts(supports: pd.Series) -> pd.Series:
     suggested_support column; students with no matched type are counted under NO_SUPPORT, last."""
     order = [label(name) for name in INTERVENTIONS] + [NO_SUPPORT]
     return supports.value_counts().reindex(order, fill_value=0).astype(int)
+
+
+def _kinds(features) -> list[str]:
+    """The kinds of input (REASON_KINDS) behind `features`, in order of first appearance, in lower case."""
+    out = []
+    for f in features:
+        kind = REASON_KINDS.get(f, f).lower()
+        if kind not in out:
+            out.append(kind)
+    return out
+
+
+def never_first(intervention: str) -> str:
+    """Why a support type can be suggested by the rules yet be nobody's primary suggestion: the inputs it is
+    matched from, and the types that share those inputs, from FEATURE_TO_INTERVENTIONS."""
+    own = [f for f, w in FEATURE_TO_INTERVENTIONS.items() if intervention in w]
+    others = sorted({label(o) for f in own for o in FEATURE_TO_INTERVENTIONS[f] if o != intervention})
+    return (f"Matched only from {_join(_kinds(own))}, which also point to {_join(others)}. For every flagged "
+            "student in view another type has the larger total, so it is never listed first.")
