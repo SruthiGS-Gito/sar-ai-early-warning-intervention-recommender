@@ -18,7 +18,7 @@ def _texts(at) -> str:
     parts = [e.value for e in at.info] + [e.value for e in at.warning] + [e.value for e in at.markdown]
     parts += [e.value for e in at.success] + [e.value for e in at.code]
     parts += [e.value for e in at.caption] + [str(e.value) for e in at.metric]
-    return "\n".join(str(p) for p in parts)
+    return "\n".join(str(p) for p in parts if not str(p).startswith("<style>"))
 
 
 @pytest.fixture
@@ -38,13 +38,33 @@ def synthetic_env(empty_env, matrix, small_final):
     return empty_env
 
 
-MAIN_TABS = ["Priority list", "Student", "Cohort insights"]
+MAIN_PAGES = ["Overview", "Student", "Modules"]
+PAGES = [*MAIN_PAGES, "About"]
 DEVELOPER_TEXT = re.compile(r"SCRUM-|ticket \d|scripts/|\.py\b|docs/|models/|metrics\.json|last updated|\d+ rows")
 
 
+def _go(at, page: str):
+    """Switch pages the way the sidebar navigation does."""
+    at.radio(key="nav_page").set_value(page).run()
+    return at
+
+
+def _tab(at, page: str):
+    """The main area after switching to `page`."""
+    return _go(at, page).main
+
+
+def _visit(at, pages) -> str:
+    """Text of `pages`, visited in turn; the app returns to the page it was on."""
+    current = at.radio(key="nav_page").value
+    text = "\n".join(_texts(_tab(at, p)) for p in pages)
+    _go(at, current)
+    return text
+
+
 def _main_tab_texts(at) -> str:
-    """Text of the sidebar and of every tab except About."""
-    return "\n".join([_texts(at.sidebar)] + [_texts(t) for t in at.tabs if t.label in MAIN_TABS])
+    """Text of the sidebar and of every page except About."""
+    return _texts(at.sidebar) + "\n" + _visit(at, MAIN_PAGES)
 
 
 def _open_training(at, presentation: str = "2013J"):
@@ -54,13 +74,13 @@ def _open_training(at, presentation: str = "2013J"):
 
 
 def _about_text(at) -> str:
-    return _texts([t for t in at.tabs if t.label == "About"][0])
+    return _visit(at, ["About"])
 
 
 def test_app_runs_with_nothing_available(empty_env):
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
-    assert [t.label for t in at.tabs] == [*MAIN_TABS, "About"]
+    assert [o.split()[-1] for o in at.radio(key="nav_page").options] == PAGES
     main, about = _main_tab_texts(at), _about_text(at)
     assert "not available yet" in main and "Data details" in main
     assert not DEVELOPER_TEXT.search(main), DEVELOPER_TEXT.search(main)
@@ -79,19 +99,19 @@ def test_status_cards_describe_each_team_table(empty_env):
         assert f"#### {spec.title}" in main and spec.description in main
         assert f"- {spec.title}: not loaded" in about
         assert spec.file not in about and not any(f"`{c}`" in about for c in spec.columns)
-    assert main.count("Not available yet. Details are in the About tab") == 3
+    assert main.count("Not available yet. Details are on the About page") == 3
     assert "### Risk bands by module" in main
 
 
 def test_main_tabs_hold_no_developer_text_and_about_holds_the_details(tables_env):
-    at = AppTest.from_file(APP, default_timeout=120).run()
+    at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Modules")
     at.toggle(key="show_3d").set_value(True).run()
     assert not at.exception
     main, about = _main_tab_texts(at), _about_text(at)
     assert not DEVELOPER_TEXT.search(main), DEVELOPER_TEXT.search(main)
     assert "24 inputs known by Day 30" in about and "isotonic calibration" in about.lower()
     assert "Trained on 2013B, 2013J, 2014B; on 2014J: ROC-AUC" in about
-    bands = [t for t in at.tabs if t.label == "About"][0].dataframe[0].value
+    bands = _tab(at, "About").dataframe[0].value
     assert list(bands["Band"]) == ["Low", "Medium", "High"] and "Capacity flagging" in about
     assert "rule-based" in about and "no interventions" in about
     assert '"This dataset is released under CC-BY 4.0 license."' in about
@@ -105,10 +125,6 @@ CARDS = ["Students in view", "Flagged for contact", "Precision of the flags", "S
 LIST_COLUMNS = ["Rank", "Student ID", "Module", "Risk band", "Main reason", "Suggested support"]
 
 
-def _tab(at, label):
-    return [t for t in at.tabs if t.label == label][0]
-
-
 def _listing(at):
     return [df for df in at.dataframe if "Main reason" in df.value.columns][0]
 
@@ -116,10 +132,10 @@ def _listing(at):
 def _open_student(at, module=None, sid=None):
     """Choose a student the way a selected priority-list row does: module, student, then the Student tab."""
     if module is None:
-        row = _listing(at).value.iloc[0]
+        row = _listing(_go(at, "Overview")).value.iloc[0]
         module, sid = row["Module"], int(row["Student ID"])
+    _go(at, "Student")
     at.selectbox(key="lookup_module").set_value(module).run()
-    at.session_state["page"] = "Student"
     at.selectbox(key="lookup_student").set_value(sid).run()
     return module, sid
 
@@ -132,8 +148,8 @@ def test_priority_list_is_populated_on_first_load(synthetic_env, matrix, small_f
 
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
-    assert [t.label for t in at.tabs][0] == "Priority list" and at.session_state["page"] == "Priority list"
-    tab = _tab(at, "Priority list")
+    assert at.radio(key="nav_page").value == "Overview"
+    tab = at.main
     cards = {m.label: m.value for m in tab.metric}
     assert list(cards) == CARDS and all(m.proto.show_border and m.help for m in tab.metric)
     val = matrix[matrix["code_presentation"] == "2014J"]
@@ -171,7 +187,7 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
 
     at = AppTest.from_file(APP, default_timeout=120).run()
     tab = _tab(at, "Student")
-    assert "Select a student in the priority list" in _texts(tab)
+    assert "Select a student in the Overview list" in _texts(tab)
     assert {b.label for b in tab.button} == {"Show an example High-risk student", "Show an example Low-risk student"}
     assert not any(b.proto.help for b in tab.button) and "drawn with a fixed seed" in _texts(tab)
     module, sid = _open_student(at)
@@ -179,17 +195,17 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
     tab = _tab(at, "Student")
     text = _texts(tab)
     assert f"### Student {sid}" in text and f"Module **{module}**" in text
-    assert re.search(r":(red|gray|blue)-badge\[(High|Medium|Low) risk\]", text)
+    assert re.search(r'class="pill pill-(high|medium|low)">(High|Medium|Low) risk</span>', text)
     assert re.search(rf"ranked \d+ of [\d,]+ in module", text)
     why = [s for s in _chart_specs(at) if s["layout"]["title"]["text"] == "What moves this score"][0]
     traces = {t["name"]: t for t in why["data"]}
     assert set(traces) == {"Raises risk", "Lowers risk"} and why["layout"]["xaxis"]["title"]["text"] == "Effect on risk"
-    assert traces["Raises risk"]["marker"]["color"] == "#C44E52" and all(x > 0 for x in traces["Raises risk"]["x"])
+    assert traces["Raises risk"]["marker"]["color"] == "#ff5d73" and all(x > 0 for x in traces["Raises risk"]["x"])
     assert all(x <= 0 for x in traces["Lowers risk"]["x"])
     shown = [p for t in why["data"] for p in t["customdata"]]
     assert 1 <= len(shown) <= 6 and not any(p.startswith("being on module") for p in shown)
     assert all(len(line) <= 30 for t in why["data"] for y in t["y"] for line in y.split("<br>"))
-    assert "Red bars raise the risk score and blue bars lower it" in text
+    assert "Red bars raise the risk score and teal bars lower it" in text
     assert re.search(r"(The risk score is raised most by|No activity, assessment or study-load input raises)", text)
     assert "Suggested support" in text and text.count("descriptive, not evidence of effectiveness") == 1
     assert re.search(r"Among [\d,]+ similar earlier students, [\d,]+ ended at risk\.", text)
@@ -213,6 +229,7 @@ def test_flagging_rule_and_three_d_view_from_the_sidebar(synthetic_env):
     assert at.radio(key="flag_rule").value == "Capacity ranking" and at.slider(key="capacity").value == 20
     at.radio(key="flag_rule").set_value("Wide net (fixed cutoff)").run()
     assert not at.exception and "Wide net: calibrated risk score of at least" in _texts(at)
+    _go(at, "Modules")
     assert not at.toggle(key="show_3d").value
     at.toggle(key="show_3d").set_value(True).run()
     assert not at.exception
@@ -241,7 +258,7 @@ def test_lookup_uses_precomputed_explanations_when_present(synthetic_env, matrix
     _open_student(at)
     assert not at.exception
     assert "Background characteristics are not model inputs." in _texts(at)
-    listing = _listing(at).value
+    listing = _listing(_go(at, "Overview")).value
     assert not (listing["Main reason"] == "Open the student to see").any()
 
 
@@ -282,7 +299,7 @@ def test_cohort_insights_shows_cards_charts_and_collapsed_tables(tables_env):
     _, prof = tables_env
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
-    tab = _tab(at, "Cohort insights")
+    tab = _tab(at, "Modules")
     text = _texts(tab)
     assert "not available yet" not in text.lower()
     for heading in ["### Risk bands by module", "### Student profiles", "### Retention funnel"]:
@@ -303,7 +320,7 @@ def test_cohort_insights_shows_cards_charts_and_collapsed_tables(tables_env):
 
 
 def test_team_table_selectors_and_training_note(tables_env):
-    at = _open_training(AppTest.from_file(APP, default_timeout=120).run())
+    at = _go(_open_training(AppTest.from_file(APP, default_timeout=120).run()), "Modules")
     assert not at.exception and "Training presentation: the model learned" in _texts(at)
     assert "Shown for the training presentations together" in _texts(at)
     at.selectbox(key="funnel_module").set_value("AAA").run()
@@ -337,11 +354,11 @@ def test_funnel_shows_a_stage_that_does_not_apply_as_not_applicable(synthetic_en
     no_due = matrix.assign(n_assessments_due=matrix["n_assessments_due"].where(matrix["code_module"] != "GGG", 0))
     table = funnel.retention_funnel(*synthetic_registrations(matrix), no_due)
     table.to_csv(synthetic_env / "data" / "processed" / "retention_funnel.csv", index=False)
-    at = AppTest.from_file(APP, default_timeout=120).run()
+    at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Modules")
     at.selectbox(key="funnel_module").set_value("GGG").run()
     assert not at.exception
     text = _texts(at)
-    assert "submission stage is not applicable" in text
+    assert "submission stage is not applicable" in _about_text(at)
     carried = table[(table["code_module"] == "GGG") & (table["code_presentation"] == "2014J")
                     & ~table["applicable"]]["students"].sum()
     assert f"{carried:,} students in GGG are carried forward on the submission check" in text
@@ -351,7 +368,7 @@ def test_funnel_shows_a_stage_that_does_not_apply_as_not_applicable(synthetic_en
 
 
 def test_band_views_default_to_the_validation_presentation(tables_env):
-    at = AppTest.from_file(APP, default_timeout=120).run()
+    at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Modules")
     assert not at.exception
     text = _texts(at)
     assert at.selectbox(key="presentation").options == ["2014J (validation)"]
@@ -409,7 +426,7 @@ def test_tables_and_charts_are_formatted_for_reading(tables_env):
     dept.loc[hide, rate_cols] = float("nan")
     dept.loc[hide, "suppressed"] = True
     dept.to_csv(processed / "department_risk.csv", index=False)
-    at = AppTest.from_file(APP, default_timeout=120).run()
+    at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Modules")
     assert not at.exception
     frames = [df.value for df in at.dataframe]
     view = [f for f in frames if "High band" in f.columns][0]
@@ -427,7 +444,7 @@ def test_tables_and_charts_are_formatted_for_reading(tables_env):
     stacked = [s for s in specs if s["layout"]["title"]["text"].startswith("Share of students in each risk band")][0]
     assert "All modules" in stacked["data"][0]["x"] and stacked["data"][0]["texttemplate"] == "%{y:.0%}"
     bars = [s for s in specs if s["layout"]["title"]["text"] == "Observed at-risk rate by profile, 2014J"][0]
-    assert bars["data"][0]["marker"]["color"] == "#8C8C8C"
+    assert bars["data"][0]["marker"]["color"] == "#7c6cff"
     validation = prof[prof["scope"] == "validation"].sort_values("at_risk_rate", ascending=False)
     assert bars["data"][0]["text"] == [f"{r:.0%} at risk<br>{sh:.0%} of students"
                                        for r, sh in zip(validation["at_risk_rate"], validation["share_of_scope"])]
@@ -442,7 +459,7 @@ def _frame(at, column):
 def test_funnel_table_renders_a_dash_and_right_aligned_counts(tables_env):
     import json
 
-    at = AppTest.from_file(APP, default_timeout=120).run()
+    at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Modules")
     assert not at.exception
     frame = _frame(at, "Share of previous stage")
     shown = frame.value.reset_index(drop=True)
@@ -469,7 +486,7 @@ def test_capacity_can_apply_to_each_module(tables_env, matrix):
 def test_calibration_chart_replaces_the_histogram(tables_env, matrix, small_final):
     from sar.service import views
 
-    at = AppTest.from_file(APP, default_timeout=120).run()
+    at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Modules")
     assert not at.exception
     spec = [s for s in _chart_specs(at) if s["layout"]["title"]["text"].startswith("Observed at-risk rate against")][0]
     expected = views.calibration_bins(views.score_presentation(small_final[0], matrix, "2014J"))
@@ -488,7 +505,7 @@ def test_about_explains_the_bands_design_and_limitations(tables_env, matrix, sma
     env, _ = tables_env
     at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
-    about_tab = [t for t in at.tabs if t.label == "About"][0]
+    about_tab = _tab(at, "About")
     about = _texts(about_tab)
     reading = [df.value for df in about_tab.dataframe if "Lift" in df.value.columns][0].set_index("Band")
     dept = pd.read_csv(env / "data" / "processed" / "department_risk.csv")
@@ -526,7 +543,7 @@ def test_three_d_view_caption_explains_the_encoding(empty_env):
     metrics = {"validation_presentation": ["2014J"],
                "final": {"cutoffs_from_oof": fitted["cutoffs"], "validation": final.evaluate(fitted, val)}}
     save_final(fitted, {"seed": 42}, metrics, empty_env / "models" / "final")
-    at = AppTest.from_file(APP, default_timeout=120).run()
+    at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Modules")
     at.toggle(key="show_3d").set_value(True).run()
     assert not at.exception
     text = _texts(at)
@@ -548,7 +565,7 @@ def test_about_works_with_a_model_but_no_data(empty_env, small_final):
 def test_example_buttons_choose_a_validation_student_in_the_band(synthetic_env, matrix, small_final, band):
     from sar.service import views
 
-    at = AppTest.from_file(APP, default_timeout=120).run()
+    at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Student")
     module = at.selectbox(key="lookup_module").value
     at.button(key=f"example_{band.lower()}").click().run()
     assert not at.exception
@@ -557,7 +574,7 @@ def test_example_buttons_choose_a_validation_student_in_the_band(synthetic_env, 
     expected = views.example_student(scored, band, module, 42)
     assert (at.selectbox(key="lookup_module").value, at.selectbox(key="lookup_student").value) == expected
     text = _texts(at)
-    assert f"badge[{band} risk]" in text and f"Module **{expected[0]}**" in text and "ranked " in text
+    assert f'">{band} risk</span>' in text and f"Module **{expected[0]}**" in text and "ranked " in text
     assert "Suggested support" in text
     expanders = [e.label for e in _tab(at, "Student").expander]
     if band == "Low":
@@ -573,7 +590,8 @@ def test_streamlit_config_sets_theme_and_minimal_toolbar():
 
     config = tomllib.loads((PROJECT_ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8"))
     assert config["client"]["toolbarMode"] == "minimal"
-    assert config["theme"]["base"] == "light" and config["theme"]["primaryColor"] == "#4C72B0"
+    assert config["theme"]["base"] == "dark" and config["theme"]["primaryColor"] == "#7c6cff"
+    assert config["theme"]["backgroundColor"] == "#0b1020" and config["theme"]["textColor"] == "#e8ecff"
     assert config["server"]["address"] == "localhost"
     source = (PROJECT_ROOT / "app" / "streamlit_app.py").read_text(encoding="utf-8")
     assert 'st.set_page_config(page_title="Student Academic Risk: Day 30 early warning", layout="wide")' in source
@@ -588,3 +606,33 @@ def test_without_precomputed_explanations_only_the_top_rows_get_reasons(syntheti
     opened = listing["Main reason"] == "Open the student to see"
     assert not opened.iloc[:50].any() and opened.iloc[50:].all()
     assert "prepared for the top 50 students" in _texts(at)
+
+
+def test_navigation_renders_only_the_selected_page(synthetic_env):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    markers = {"Overview": "Flagged for contact", "Student": "Show an example High-risk student",
+               "Modules": "### Risk bands by module", "About": "### Model"}
+    for page, marker in markers.items():
+        tab = _tab(at, page)
+        text = _texts(tab) + " ".join([b.label for b in tab.button] + [m.label for m in tab.metric])
+        assert not at.exception and f"## {page}" in text and "Presentation: 2014J (validation)" in text
+        assert marker in text and not any(m in text for p, m in markers.items() if p != page)
+
+
+def test_opening_a_listed_student_shows_the_student_page(synthetic_env):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    row = _listing(at).value.iloc[2]
+    # The row-selection callback sets these three values; AppTest cannot click a table row.
+    at.session_state["lookup_module"], at.session_state["lookup_student"] = row["Module"], int(row["Student ID"])
+    at.session_state["nav_page"] = "Student"
+    at.run()
+    assert not at.exception and at.radio(key="nav_page").value == "Student"
+    assert f"Student {row['Student ID']}" in _texts(at.main)
+
+
+def test_page_selections_survive_a_visit_to_another_page(synthetic_env):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    module, sid = _open_student(at)
+    _go(_go(at, "Modules"), "Student")
+    assert (at.selectbox(key="lookup_module").value, at.selectbox(key="lookup_student").value) == (module, sid)
+    assert f"Student {sid}" in _texts(at.main)

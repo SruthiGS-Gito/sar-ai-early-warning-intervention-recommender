@@ -9,11 +9,14 @@ gatherUsageStats = false
 [client]
 toolbarMode = "minimal"
 
-# Light theme in the colours the charts use (the "on track" blue as the accent).
+# Dark theme: deep navy background, indigo accent, indigo borders and 14px corners on cards; the app CSS adds
+# the gradient, the card glow and the band pills.
 [theme]
-base = "light"
-primaryColor = "#4C72B0"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F2F4F7"
-textColor = "#1F2933"
+base = "dark"
+primaryColor = "#7c6cff"
+backgroundColor = "#0b1020"
+secondaryBackgroundColor = "#131a33"
+textColor = "#e8ecff"
 font = "sans-serif"
+borderColor = "#3b3a78"
+baseRadius = "14px"

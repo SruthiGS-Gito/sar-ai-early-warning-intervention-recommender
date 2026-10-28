@@ -2,17 +2,18 @@
 
 Run from the repo root:  streamlit run app/streamlit_app.py
 
-Layout, built around a tutor's workflow:
-* Sidebar: the controls every page uses (presentation, module, contact capacity) and an Advanced
-  section (training presentations with their in-sample note, flagging rule, capacity scope).
-* Tabs: Priority list (who to contact first), Student (why, and what support fits), Cohort
-  insights (bands, profiles and retention by module), About (model, design, limits, data).
+Layout, built around a tutor's workflow, in a dark card-based theme:
+* Sidebar: app name and purpose, page navigation, the controls every page uses (presentation, module,
+  contact capacity) and an Advanced section (training presentations with their in-sample note, flagging
+  rule, capacity scope).
+* Pages: Overview (who to contact first), Student (why, and what support fits), Modules (bands,
+  outcomes and retention by module), About (model, design, limits, data). Only the selected page runs.
 
 * The final model (models/final/) scores students with a calibrated risk score, a risk band
   (Low, Medium, High) and a rank. Students are flagged by capacity ranking or by the wide-net cutoff.
 * Data, model, explainer, precomputed explanations and the similar-student pool load once (cached).
 * Anything missing shows a message; the app does not crash on it. File names, build commands and
-  build dates are kept in the About tab.
+  build dates are kept on the About page.
 * The validation presentation is shown by default. A training presentation, whose scores are
   in-sample, is offered only after the user opts in under Advanced, and is labelled wherever shown.
 * Displays are aggregated by default; individual students appear only in the priority list and the
@@ -29,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import plotly.graph_objects as go  # noqa: E402
+import plotly.io as pio  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from sar.config import CUTOFF_DAY, RANDOM_SEED  # noqa: E402
@@ -85,22 +87,50 @@ from sar.service.views import (  # noqa: E402
 )
 from sar.tables.department import ALL_MODULES, BAND_RATES, BAND_SHARES  # noqa: E402
 from sar.tables.profiles import PROFILE_FEATURES  # noqa: E402
-from sar.viz.plots import AT_RISK, NEUTRAL, ON_TRACK  # noqa: E402
 
-# Smaller page title, larger page headline, tighter vertical spacing; colours come from the theme.
+# Dark theme: one palette for bands, text and lines, used by the CSS and the Plotly template alike.
+BAND_COLOURS = {"High": "#ff5d73", "Medium": "#ffb454", "Low": "#35d0ba"}
+TEXT, MUTED, GRID, ACCENT, ACCENT_2 = "#e8ecff", "#9aa3c7", "rgba(154,163,199,0.18)", "#7c6cff", "#4f8cff"
 STYLE = """<style>
-[data-testid="stMainBlockContainer"] {padding-top: 2.5rem; padding-bottom: 2rem;}
-[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {gap: 0.7rem;}
-[data-testid="stMainBlockContainer"] h1 {font-size: 1.4rem; padding: 0;}
-[data-testid="stMainBlockContainer"] h2 {font-size: 2rem; padding: 0.25rem 0 0;}
-[data-testid="stMainBlockContainer"] h4 {padding: 0 0 0.25rem;}
+.stApp {background: radial-gradient(circle at 15% 0%, rgba(124,108,255,0.22), transparent 45%),
+        radial-gradient(circle at 90% 10%, rgba(79,140,255,0.18), transparent 40%), #0b1020;}
+[data-testid="stSidebar"] > div:first-child {background: linear-gradient(180deg, #131a33 0%, #0d1328 100%);}
+[data-testid="stMainBlockContainer"] {padding-top: 2rem; padding-bottom: 2rem;}
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {gap: 0.8rem;}
+[class*="st-key-card-"], [data-testid="stMetric"] {
+    border: 1px solid rgba(124,108,255,0.35) !important; border-radius: 14px !important; padding: 1rem 1.1rem;
+    background: linear-gradient(160deg, rgba(124,108,255,0.10), rgba(19,26,51,0.65));
+    box-shadow: 0 0 22px rgba(124,108,255,0.12);}
+[data-testid="stExpander"] details {border: 1px solid rgba(124,108,255,0.25); border-radius: 14px;}
+.pill {display: inline-block; padding: 0.15rem 0.7rem; border-radius: 999px; font-size: 0.85rem; font-weight: 600;
+       border: 1px solid currentColor;}
+.pill-high {color: #ff5d73; background: rgba(255,93,115,0.14);}
+.pill-medium {color: #ffb454; background: rgba(255,180,84,0.14);}
+.pill-low {color: #35d0ba; background: rgba(53,208,186,0.14);}
+.pill-info {color: #b9b2ff; background: rgba(124,108,255,0.16);}
+.page-subtitle {color: #9aa3c7; margin-top: -0.6rem;}
+.brand {font-size: 1.15rem; font-weight: 700; color: #e8ecff;}
+.st-key-nav [role="radiogroup"] {gap: 0.2rem;}
+.st-key-nav [role="radiogroup"] label {width: 100%; padding: 0.45rem 0.7rem; border-radius: 10px; margin: 0;}
+.st-key-nav [role="radiogroup"] label > div:first-child {display: none;}
+.st-key-nav [role="radiogroup"] label:has(input:checked) {background: rgba(124,108,255,0.25);
+       box-shadow: inset 3px 0 0 #7c6cff;}
+.st-key-nav [role="radiogroup"] label:hover {background: rgba(124,108,255,0.12);}
 </style>"""
+CHART_HEIGHT = 380
+pio.templates["sar_dark"] = go.layout.Template(layout=go.Layout(
+    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=CHART_HEIGHT,
+    font={"color": TEXT, "family": "Inter, Segoe UI, sans-serif", "size": 13}, title={"font": {"size": 15}},
+    colorway=[ACCENT, ACCENT_2, BAND_COLOURS["Low"], BAND_COLOURS["Medium"], BAND_COLOURS["High"]],
+    xaxis={"gridcolor": GRID, "zerolinecolor": GRID, "linecolor": GRID},
+    yaxis={"gridcolor": GRID, "zerolinecolor": GRID, "linecolor": GRID},
+    legend={"bgcolor": "rgba(0,0,0,0)"}, hoverlabel={"bgcolor": "#131a33", "font": {"color": TEXT}}))
+pio.templates.default = "plotly_dark+sar_dark"
 BAND_HELP = ("Risk bands come from the calibrated risk score: Low below the wide-net cutoff ({medium:.2f}), "
              "Medium from it, High from the top-20% cutoff ({high:.2f}). Both cutoffs were set on training data.")
 TRAINING_NOTE = ("This is a training presentation: the model learned from these students' outcomes, so their scores "
                  f"look better than they would on new students. Use {TEST_PRESENTATION} to see the model on new students.")
 CAPACITY, WIDE_NET = "Capacity ranking", "Wide net (fixed cutoff)"
-BAND_COLOURS = {"Low": ON_TRACK, "Medium": NEUTRAL, "High": AT_RISK}
 FLAG_VS_BAND = ("High is a fixed calibrated-score cutoff set when the model was built; capacity flags the "
                 "highest-risk share of this cohort, which can include Medium students when the share exceeds the "
                 "High band's share.")
@@ -110,8 +140,15 @@ EVIDENCE_NOTE = ("Observed at-risk rate inside each band, and its lift: the band
 SCOPE_COHORT, SCOPE_MODULE = "the whole cohort", "each module separately"
 APP_NAME = "Student Academic Risk"
 APP_PURPOSE = "Day 30 early warning: who to contact first, why, and which support fits."
-PAGES = ["Priority list", "Student", "Cohort insights", "About"]
-BADGE_COLOURS = {"High": "red", "Medium": "gray", "Low": "blue"}
+PAGES = ["Overview", "Student", "Modules", "About"]
+PAGE_ICONS = {"Overview": ":material/dashboard:", "Student": ":material/person:", "Modules": ":material/grid_view:",
+              "Support": ":material/volunteer_activism:", "About": ":material/info:"}
+PAGE_STATE = ["lookup_module", "lookup_student", "funnel_module", "show_3d"]
+PAGE_SUBTITLES = {"Overview": "Who to contact first, and why.",
+                  "Student": "Why one student is flagged, and which support fits.",
+                  "Modules": "Risk bands, outcomes and engagement by module.",
+                  "Support": "Suggested support across flagged students.",
+                  "About": "The model, its design, its limits and the data."}
 CHIP_COLOURS = ["red", "orange", "violet", "blue", "green", "primary"]
 SNAPSHOT = {"total_clicks": "Total clicks", "active_days": "Active days",
             "trailing_inactive_days": f"Days inactive just before Day {CUTOFF_DAY}",
@@ -119,10 +156,9 @@ SNAPSHOT = {"total_clicks": "Total clicks", "active_days": "Active days",
 LOWER_IS_BETTER = {"trailing_inactive_days", "n_missed"}
 SAME_AS_MEDIAN = "same as module median"
 WRAP = 30  # characters per line of a factor label
-CHART_HEIGHT = 380
 MAX_LIVE_REASONS = 50
 OPEN_FOR_DETAILS = "Open the student to see"
-WHY_LEGEND = "Red bars raise the risk score and blue bars lower it; a longer bar means a larger effect."
+WHY_LEGEND = "Red bars raise the risk score and teal bars lower it. A longer bar means a larger effect."
 PSEUDONYM_NOTE = "Student IDs are the pseudonymised identifiers published with OULAD."
 DESCRIPTIVE = "Similar past students (descriptive, not evidence of effectiveness)"
 CALIBRATION_NOTE = ("Each point is a bin of {val} students by calibrated score (width 0.1): its mean calibrated score "
@@ -249,7 +285,7 @@ def status_card(status: TableStatus) -> None:
         st.markdown(f"#### {status.spec.title}")
         st.write(status.spec.description)
         (st.info if status.state == "missing" else st.warning)(
-            f"{CARD_MESSAGES[status.state]} Details are in the About tab, under Data details.")
+            f"{CARD_MESSAGES[status.state]} Details are on the About page, under Data details.")
 
 
 PROFILE_HEADERS = {"mean_total_clicks": ("Mean clicks", "{:,.0f}"),
@@ -306,8 +342,6 @@ def sidebar(presentations: list[str], modules_of) -> View:
     """App name, purpose and the shared controls. Training presentations appear only after the
     Advanced toggle is on; the toggle's state is read first so the presentation list can follow it."""
     sb = st.sidebar
-    sb.title(APP_NAME)
-    sb.caption(APP_PURPOSE)
     training = [p for p in presentations if p != TEST_PRESENTATION]
     if TEST_PRESENTATION not in presentations:
         options = presentations
@@ -334,9 +368,42 @@ def sidebar(presentations: list[str], modules_of) -> View:
     return View(pres, module, pct / 100, rule, scope == SCOPE_MODULE)
 
 
+def sidebar_nav() -> None:
+    """Brand block and page navigation, above the shared controls."""
+    st.sidebar.markdown(f'<div class="brand">{APP_NAME}</div>', unsafe_allow_html=True)
+    st.sidebar.caption(APP_PURPOSE)
+    with st.sidebar.container(key="nav"):
+        st.radio("Navigation", PAGES, key="nav_page", format_func=lambda p: f"{PAGE_ICONS[p]}  {p}",
+                 label_visibility="collapsed")
+
+
+def band_pill(band: str) -> str:
+    return f'<span class="pill pill-{band.lower()}">{band} risk</span>'
+
+
+def show_chart(fig) -> None:
+    """Every chart uses the app's dark Plotly template rather than Streamlit's chart theme."""
+    st.plotly_chart(fig, width="stretch", theme=None)
+
+
+def page_header(page: str, pres: str | None) -> None:
+    """Page title and one-line subtitle, with the presentation on the right."""
+    left, right = st.columns([4, 1.4], vertical_alignment="center")
+    left.markdown(f"## {page}")
+    left.markdown(f'<div class="page-subtitle">{PAGE_SUBTITLES[page]}</div>', unsafe_allow_html=True)
+    if pres:
+        kind = "validation" if pres == TEST_PRESENTATION else "training, in-sample"
+        right.markdown(f'<span class="pill pill-info">Presentation: {pres} ({kind})</span>', unsafe_allow_html=True)
+
+
 st.set_page_config(page_title="Student Academic Risk: Day 30 early warning", layout="wide")
+# Only the selected page runs, and Streamlit drops the state of widgets that are not drawn; writing these
+# values back keeps the chosen student and the page selections when the user moves between pages.
+for k in PAGE_STATE:
+    if k in st.session_state:
+        st.session_state[k] = st.session_state[k]
 st.markdown(STYLE, unsafe_allow_html=True)
-st.title("Student Academic Risk: Day 30 early warning")
+sidebar_nav()
 
 paths = resolve_paths()
 processed, models = str(paths["processed"]), str(paths["models"])
@@ -346,7 +413,7 @@ core_ok = matrix_l.ok and model_l.ok
 
 def core_message() -> None:
     missing = [name for name, loaded in (("the Day 30 data", matrix_l), ("the model", model_l)) if not loaded.ok]
-    st.info(f"This view needs {' and '.join(missing)}, which are not available yet. Details are in the About tab, "
+    st.info(f"This view needs {' and '.join(missing)}, which are not available yet. Details are on the About page, "
             "under Data details.")
 
 
@@ -359,11 +426,6 @@ if core_ok:
                    lambda p: sorted(matrix.loc[matrix["code_presentation"] == p, "code_module"].unique()))
 else:
     ctl = None
-    st.sidebar.title(APP_NAME)
-    st.sidebar.caption(APP_PURPOSE)
-
-priority, student, cohort, about = st.tabs(PAGES, key="page", on_change="rerun")
-
 
 def show_example(band: str) -> None:
     """Button callback: choose a validation student in `band` (fixed seed), in the current module when possible."""
@@ -378,11 +440,11 @@ def show_example(band: str) -> None:
 
 
 def open_selected() -> None:
-    """Priority-list selection callback: open the chosen student in the Student tab."""
+    """Priority-list selection callback: open the chosen student on the Student page."""
     pick = selected_row(st.session_state.get("priority_rows", []), st.session_state.get("priority_table"))
     if pick is not None:
         st.session_state["lookup_module"], st.session_state["lookup_student"] = pick
-        st.session_state["page"] = "Student"
+        st.session_state["nav_page"] = "Student"
 
 
 def number(v: float) -> str:
@@ -396,7 +458,8 @@ def why_chart(expl):
     top = c.loc[c["contribution"].abs().sort_values(ascending=False).index[:6]].iloc[::-1]
     labels = ["<br>".join(textwrap.wrap(p, WRAP)) for p in top["phrase"]]
     fig = go.Figure()
-    for name, colour, raises in [("Raises risk", AT_RISK, True), ("Lowers risk", ON_TRACK, False)]:
+    for name, colour, raises in [("Raises risk", BAND_COLOURS["High"], True),
+                                 ("Lowers risk", BAND_COLOURS["Low"], False)]:
         part = (top["contribution"] > 0) == raises
         fig.add_trace(go.Bar(x=top.loc[part, "contribution"].tolist(),
                              y=[lab for lab, p in zip(labels, part) if p], orientation="h", name=name,
@@ -421,14 +484,14 @@ def student_view(pres: str, module: str, sid: int) -> None:
         head = st.container(horizontal=True, vertical_alignment="center", gap="medium")
         head.markdown(f"### Student {sid}")
         head.markdown(f"Module **{module}**")
-        head.badge(f"{band} risk", color=BADGE_COLOURS[band],
-                   help=BAND_HELP.format(**{k.lower(): v for k, v in edges.items()}))
+        head.markdown(band_pill(band), unsafe_allow_html=True,
+                      help=BAND_HELP.format(**{k.lower(): v for k, v in edges.items()}))
         head.markdown(f"ranked {rank:,} of {n_module:,} in module" + (" (in-sample)" if ctl.in_sample else ""))
         st.markdown(verdict_sentence(expl))
 
     why, support, snap = st.columns(3, border=True)
     with why:
-        st.plotly_chart(why_chart(expl), width="stretch")
+        show_chart(why_chart(expl))
         st.caption(WHY_LEGEND)
         with st.expander("In words, and all inputs"):
             st.write(expl.sentence)
@@ -480,7 +543,7 @@ def support_cards(expl, rec) -> None:
         st.caption(f"{DESCRIPTIVE}: {rec.neighbours.summary()} {NOTE}")
 
 
-with student:
+def page_student() -> None:
     if not core_ok:
         core_message()
     else:
@@ -502,7 +565,7 @@ with student:
         if st.session_state.get("lookup_example"):
             st.info(f"No {TEST_PRESENTATION} student is in the {st.session_state['lookup_example']} band.")
         if sid is None:
-            st.info("Select a student in the priority list, choose a module and student ID here, or open an "
+            st.info("Select a student in the Overview list, choose a module and student ID here, or open an "
                     "example.")
         else:
             student_view(pres, module, sid)
@@ -543,7 +606,7 @@ def band_chart(part: pd.DataFrame, pres: str):
 
 
 def profile_chart(shown: pd.DataFrame, scope_label: str):
-    fig = go.Figure(go.Bar(x=shown["profile"].tolist(), y=shown["at_risk_rate"].tolist(), marker_color=NEUTRAL,
+    fig = go.Figure(go.Bar(x=shown["profile"].tolist(), y=shown["at_risk_rate"].tolist(), marker_color=ACCENT,
                            text=[f"{r:.0%} at risk<br>{sh:.0%} of students"
                                  for r, sh in zip(shown["at_risk_rate"], shown["share_of_scope"])],
                            textposition="outside"))
@@ -560,7 +623,7 @@ def funnel_view(fun: pd.DataFrame, pres: str, module: str):
                                                  part["stage"] + " (not applicable)"))
     shown = shown_rows(part)
     fig = go.Figure(go.Funnel(y=shown["stage"].tolist(), x=shown["students"].astype(float).tolist(),
-                              marker_color=ON_TRACK, texttemplate="%{value:,.0f} (%{percentInitial:.0%})"))
+                              marker_color=ACCENT_2, texttemplate="%{value:,.0f} (%{percentInitial:.0%})"))
     fig.update_layout(height=CHART_HEIGHT, margin={"t": 50}, separators=".,",
                       title=f"Students at each stage (retrospective), {module}, {pres}")
     notes = ["Retrospective: the last two stages use final outcomes, which are not model inputs."]
@@ -597,9 +660,9 @@ def calibration_chart():
     cal = calibration_bins(get_scores(processed, models, TEST_PRESENTATION, fitted, matrix))
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Perfect calibration",
-                             line={"color": NEUTRAL, "dash": "dash"}))
+                             line={"color": MUTED, "dash": "dash"}))
     fig.add_trace(go.Scatter(x=cal["mean_score"].tolist(), y=cal["observed_rate"].tolist(), mode="markers+lines+text",
-                             name="Observed", marker={"color": ON_TRACK, "size": 9}, line={"color": ON_TRACK},
+                             name="Observed", marker={"color": ACCENT, "size": 9}, line={"color": ACCENT},
                              text=[f"{n:,}" for n in cal["students"]], textposition="top left"))
     fig.update_layout(xaxis_title="Mean calibrated risk score", yaxis_title="Observed at-risk rate",
                       xaxis_range=[0, 1], yaxis_range=[0, 1], xaxis_tickformat=".0%", yaxis_tickformat=".0%",
@@ -608,7 +671,7 @@ def calibration_chart():
     return fig
 
 
-with cohort:
+def page_modules() -> None:
     pres = ctl.presentation if ctl else TEST_PRESENTATION
     module = ctl.module if ctl else ALL_MODULES
     in_sample = is_training_presentation(pres)
@@ -623,7 +686,7 @@ with cohort:
         status_card(dept_status)
     else:
         dept_part = dept[dept["code_presentation"] == pres]
-        st.plotly_chart(band_chart(dept_part, pres), width="stretch")
+        show_chart(band_chart(dept_part, pres))
         if dept_part["suppressed"].astype(bool).any():
             st.caption(f"Modules with fewer than {MIN_CELL} students are not shown.")
 
@@ -638,7 +701,7 @@ with cohort:
         scope_label = "training presentations" if scope == "training" else TEST_PRESENTATION
         prof_part = prof[prof["scope"] == scope].sort_values("at_risk_rate", ascending=False, na_position="last")
         shown = shown_rows(prof_part)
-        st.plotly_chart(profile_chart(shown, scope_label), width="stretch")
+        show_chart(profile_chart(shown, scope_label))
         if scope == "training":
             st.caption("Shown for the training presentations together, the rows the clusters were fitted on.")
         with st.expander("What each profile means"):
@@ -659,7 +722,7 @@ with cohort:
         else:
             funnel_module = st.selectbox("Module", options, index=default, key="funnel_module")
         fig, note, funnel_table = funnel_view(fun, pres, funnel_module)
-        st.plotly_chart(fig, width="stretch")
+        show_chart(fig)
         st.caption(note)
 
     with st.expander("View data tables"):
@@ -697,7 +760,7 @@ with cohort:
 
     if core_ok:
         with st.expander("Model reliability"):
-            st.plotly_chart(calibration_chart(), width="stretch")
+            show_chart(calibration_chart())
             st.caption(CALIBRATION_NOTE.format(val=TEST_PRESENTATION, medium=edges["Medium"], high=edges["High"]))
 
         with st.expander("Optional 3D view"):
@@ -708,7 +771,7 @@ with cohort:
                     st.info(f"No band of {pres} students has at least {MIN_CELL} students, so there is nothing to "
                             f"show in 3D. {hidden_bands(bands)} smaller bands are hidden.")
                 else:
-                    st.plotly_chart(band_figure(bands), width="stretch")
+                    show_chart(band_figure(bands))
                     st.caption(f"Each marker is a group of {pres} students with the same days active by Day "
                                f"{CUTOFF_DAY} (one horizontal axis) and average assessment score by Day {CUTOFF_DAY} "
                                "(the other horizontal axis). The vertical axis and the colour both show the group's "
@@ -730,7 +793,7 @@ def rule_caption(c: View) -> str:
     return f"Top {c.share:.0%} of {whose} by risk, {where}."
 
 
-with priority:
+def page_overview() -> None:
     if not core_ok:
         core_message()
     else:
@@ -830,7 +893,7 @@ def band_reading(pres: str) -> pd.DataFrame | None:
     return pd.DataFrame({"Band": ev.index, "rate": ev["at_risk_rate"].to_numpy(), "lift": ev["lift"].to_numpy()})
 
 
-with about:
+def page_about() -> None:
     if core_ok:
         val = ", ".join(metrics["validation_presentation"])
         train_pres = ", ".join(sorted(set(matrix["code_presentation"]) - {val}))
@@ -944,3 +1007,9 @@ with about:
                 "python scripts/train_final.py         # final model\n"
                 "python scripts/precompute_shap.py     # optional: explanations for the validation presentation\n"
                 "python scripts/build_team_tables.py   # department, funnel and profile tables", language="bash")
+
+
+PAGE_VIEWS = {"Overview": page_overview, "Student": page_student, "Modules": page_modules, "About": page_about}
+page = st.session_state.get("nav_page", PAGES[0])
+page_header(page, ctl.presentation if ctl else None)
+PAGE_VIEWS[page]()
