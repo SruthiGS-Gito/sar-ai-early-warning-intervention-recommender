@@ -42,7 +42,7 @@ from sar.explain.shap_explain import (  # noqa: E402
     explanation_from_contributions,
     make_explainer,
 )
-from sar.recommend.interventions import ACTIONABLE_FEATURES, INTERVENTIONS  # noqa: E402
+from sar.recommend.interventions import INTERVENTIONS  # noqa: E402
 from sar.recommend.neighbours import NeighbourPool  # noqa: E402
 from sar.recommend.recommender import NOTE, recommend  # noqa: E402
 from sar.service.data import (  # noqa: E402
@@ -58,12 +58,16 @@ from sar.service.data import (  # noqa: E402
 )
 from sar.service.figures import band_figure, hidden_bands  # noqa: E402
 from sar.service.priority import (  # noqa: E402
+    NO_LOW_SUGGESTION,
     NO_SUPPORT,
+    chart_factors,
+    for_reasons,
+    primary_for,
     priority_details,
     reason_counts,
     selected_row,
     short_reason,
-    similar_line,
+    similar_definition,
     snapshot,
     support_counts,
     support_sentence,
@@ -74,6 +78,7 @@ from sar.service.views import (  # noqa: E402
     MIN_CELL,
     at_risk_by_activity,
     at_risk_by_presentation,
+    band_outcome,
     band_evidence,
     batch_summary,
     calibration_bins,
@@ -164,17 +169,24 @@ BAND_ORDER = ["Low", "Medium", "High"]
 ALL_BANDS = "All bands"
 STUDENT_SECTIONS = ["Overview", "Day 30 indicators", "Why this score", "Support"]
 RING_HEIGHT = 170
-RING_HELP = "Among validation students with a similar score, about this share ended Fail or Withdrawn."
+RING_HELP = ("A group statistic from the validation presentation: the share of students in this band and module "
+             "whose final outcome was Fail or Withdrawn. It is not a personal probability.")
+SHAP_SCALE = "Change in the raw forest score (probability points, before calibration)"
+GROUP_NAMES = {"behaviour": "Behaviour", "study": "Study", "course": "Course", "background": "Background"}
 SUPPORT_COLOURS = ["#7c6cff", "#4f8cff", "#35d0ba", "#ffb454", "#ff8fa3"]
 SUPPORT_NOTE = ("Suggestions are rule-based: they match the model's risk drivers to support types. OULAD has no "
                 "intervention records, so no outcome or effectiveness figures are shown.")
+NOT_SHOWN = "Not shown"
+IN_SAMPLE_HELP = "In-sample scores are optimistic and not informative."
 DISCLAIMER = "This is a model prediction. It supports, and does not replace, professional judgment."
 WRAP = 30  # characters per line of a factor label
 MAX_LIVE_REASONS = 50
 OPEN_FOR_DETAILS = "Open the student to see"
-WHY_LEGEND = "Red bars raise the risk score and teal bars lower it. A longer bar means a larger effect."
+WHY_LEGEND = ("Red bars raise the risk score and teal bars lower it. A longer bar means a larger effect. Up to four "
+              "raising and two lowering activity, assessment and study-load inputs are shown; course-level inputs "
+              "are in the table below.")
 PSEUDONYM_NOTE = "Student IDs are the pseudonymised identifiers published with OULAD."
-DESCRIPTIVE = "Similar past students (descriptive, not evidence of effectiveness)"
+DESCRIPTIVE = "Similar past students are descriptive, not evidence of effectiveness"
 CALIBRATION_NOTE = ("Each point is a bin of {val} students by calibrated score (width 0.1): its mean calibrated score "
                     "against the share who went on to fail or withdraw, with the number of students beside it. Points "
                     "on the diagonal are well calibrated. Band cutoffs: Medium from {medium:.2f}, High from "
@@ -465,11 +477,9 @@ def number(v: float) -> str:
     return f"{v:,.0f}" if float(v).is_integer() else f"{v:,.1f}"
 
 
-def why_chart(expl):
-    """The six actionable inputs that move this student's score most, in plain words, coloured by direction.
-    Course-level context (the module, its assessment calendar) stays in the full table below the chart."""
-    c = expl.contributions[expl.contributions.index.isin(ACTIONABLE_FEATURES)]
-    top = c.loc[c["contribution"].abs().sort_values(ascending=False).index[:6]].iloc[::-1]
+def why_chart(raising: pd.DataFrame, lowering: pd.DataFrame):
+    """The strongest raising and lowering actionable inputs, in plain words, coloured by direction."""
+    top = pd.concat([lowering.iloc[::-1], raising.iloc[::-1]])
     labels = ["<br>".join(textwrap.wrap(p, WRAP)) for p in top["phrase"]]
     fig = go.Figure()
     for name, colour, raises in [("Raises risk", BAND_COLOURS["High"], True),
@@ -480,23 +490,32 @@ def why_chart(expl):
                              marker_color=colour, customdata=top.loc[part, "phrase"].tolist(),
                              hovertemplate="%{customdata}: %{x:+.3f}<extra></extra>"))
     fig.update_layout(title="What moves this score", height=CHART_HEIGHT, margin={"t": 50, "l": 10, "r": 10},
-                      xaxis_title="Effect on risk", legend={"orientation": "h", "y": -0.2},
+                      xaxis_title=SHAP_SCALE, legend={"orientation": "h", "y": -0.2},
                       yaxis={"automargin": True, "categoryorder": "array", "categoryarray": labels})
     return fig
 
 
-def ring_chart(score: float, band: str):
-    """The calibrated score as a ring: the coloured arc is the score, the faint arc the rest."""
-    fig = go.Figure(go.Pie(values=[score, 1 - score], hole=0.78, sort=False, direction="clockwise",
+def ring_chart(rate: float, band: str):
+    """A share as a ring: the coloured arc is the share, the faint arc the rest."""
+    fig = go.Figure(go.Pie(values=[rate, 1 - rate], hole=0.78, sort=False, direction="clockwise",
                            marker={"colors": [BAND_COLOURS[band], "rgba(154,163,199,0.15)"]},
                            textinfo="none", hoverinfo="skip", showlegend=False))
     fig.update_layout(height=RING_HEIGHT, margin={"t": 4, "b": 4, "l": 4, "r": 4},
-                      annotations=[{"text": f"<b>{score:.0%}</b>", "showarrow": False, "font": {"size": 26}}])
+                      annotations=[{"text": f"<b>{rate:.0%}</b>", "showarrow": False, "font": {"size": 26}}])
     return fig
 
 
+def band_outcome_text(band: str, module: str, rate: float, n: int, scope: str) -> str:
+    if scope == module:
+        return (f"of {TEST_PRESENTATION} students in the {band} band in module {module} went on to fail or "
+                f"withdraw (n = {n:,}).")
+    return (f"of {TEST_PRESENTATION} students in the {band} band across all modules went on to fail or withdraw "
+            f"(n = {n:,}). Module {module} has fewer than {MIN_CELL} students in this band.")
+
+
 def student_header(sid: int, module: str, pres: str, me: pd.Series, rank: int, n_module: int) -> None:
-    """Who the student is, their band and rank; for the validation presentation also the calibrated score."""
+    """Who the student is, their band and rank; for the validation presentation also the observed outcome of
+    the student's band in their module."""
     band = str(me["band"])
     with st.container(border=True, key="card-student"):
         who, ring, note = st.columns([2.2, 1, 1.6], vertical_alignment="center")
@@ -508,9 +527,13 @@ def student_header(sid: int, module: str, pres: str, me: pd.Series, rank: int, n
         if ctl.in_sample:
             note.caption(IN_SAMPLE_NOTE)
         else:
-            with ring:
-                show_chart(ring_chart(float(me["score"]), band))
-            note.markdown("**Estimated risk**", help=RING_HELP)
+            scored = get_scores(processed, models, TEST_PRESENTATION, fitted, matrix)
+            rate, n, scope = band_outcome(scored, module, band)
+            if n:
+                with ring:
+                    show_chart(ring_chart(rate, band))
+                note.markdown("**Observed outcome for this band**", help=RING_HELP)
+                note.caption(band_outcome_text(band, module, rate, n, scope))
         note.caption(DISCLAIMER)
 
 
@@ -536,12 +559,14 @@ def support_line(expl, s) -> str:
 
 
 def primary_card(expl, rec, where: str) -> None:
-    """The first suggestion as a card tagged Primary; for a Low-band student it is marked optional."""
-    if not rec.suggestions:
-        st.write("No activity, assessment or study-load input raises the score noticeably, so no support type "
+    """The suggestion to show first as a card tagged Primary. A Low-band student gets one only for a missed
+    assessment or a spell without activity; otherwise the card says no specific support is suggested."""
+    first = primary_for(rec)
+    if first is None:
+        st.write(NO_LOW_SUGGESTION if rec.optional and rec.suggestions else
+                 "No activity, assessment or study-load input raises the score noticeably, so no support type "
                  "is matched.")
         return
-    first = rec.suggestions[0]
     with st.container(border=True, key=f"card-primary-{where}"):
         st.markdown(f'<span class="pill pill-info">Primary</span>&nbsp; **{first.label}**', unsafe_allow_html=True)
         st.write(support_line(expl, first))
@@ -550,17 +575,28 @@ def primary_card(expl, rec, where: str) -> None:
 
 
 def support_cards(expl, rec) -> None:
-    """The primary suggestion, the other matched types under "Other options" (not for Low-band students), the
-    similar-student line and, once, the note that suggestions are rule-based and descriptive."""
+    """The primary suggestion; the other matched types under "Other options" (for a Low-band student, the
+    rule-based matches under their own expander); and, once, how the similar-student group is built and the
+    note that suggestions are rule-based and descriptive."""
     primary_card(expl, rec, "support")
-    others = [] if rec.optional else rec.suggestions[1:]
+    first = primary_for(rec)
+    others = [s for s in rec.suggestions if s is not first]
     if others:
-        with st.expander("Other options"):
+        with st.expander("Rule-based suggestions" if rec.optional else "Other options"):
             for s in others:
                 st.markdown(f'<span class="pill pill-info">Also consider</span>&nbsp; **{s.label}**: '
                             + support_line(expl, s), unsafe_allow_html=True)
-    st.caption(similar_line(rec.neighbours.n, rec.neighbours.n_at_risk))
-    st.caption(f"{DESCRIPTIVE}: {rec.neighbours.summary()} {NOTE}")
+    with st.expander("About these suggestions"):
+        st.caption(similar_definition(rec.neighbours))
+        st.caption(f"{DESCRIPTIVE}. {NOTE}")
+
+
+def inputs_table(expl) -> pd.DataFrame:
+    """Every input with its value and its change in the raw forest score, to three decimals."""
+    table = explanation_table(expl)
+    table["Change in score"] = [f"{v:+.3f}" for v in table["Change in score"]]
+    table["Group"] = table["Group"].map(GROUP_NAMES).fillna(table["Group"])
+    return table.rename(columns={"Change in score": "Change in raw forest score"})
 
 
 def student_view(pres: str, module: str, sid: int) -> None:
@@ -569,33 +605,36 @@ def student_view(pres: str, module: str, sid: int) -> None:
     scored = get_scores(processed, models, pres, fitted, matrix)
     me = scored[(scored["code_module"] == module) & (scored["id_student"] == sid)].iloc[0]
     expl = get_explanation(models, pres, module, int(sid), str(me["band"]), fitted, final.config, row)
+    shown = for_reasons(expl)
+    raising, lowering = chart_factors(shown)
     rank, n_module = module_rank(scored, module, sid)
     student_header(sid, module, pres, me, rank, n_module)
 
     pool_l = get_pool(processed, matrix)
-    rec = recommend(expl, row, pool_l.value) if pool_l.ok else None
+    rec = recommend(shown, row, pool_l.value) if pool_l.ok else None
     summary, indicators, why, support = st.tabs(STUDENT_SECTIONS)
     with summary:
         with st.container(border=True, key="card-verdict"):
-            st.markdown(verdict_sentence(expl))
+            st.markdown(verdict_sentence(raising, lowering))
         if rec is None:
             st.info(pool_l.message)
         else:
-            primary_card(expl, rec, "summary")
+            primary_card(shown, rec, "summary")
     with indicators:
         indicator_cards(pres, module, sid)
     with why:
         with st.container(border=True, key="card-why"):
-            show_chart(why_chart(expl))
+            show_chart(why_chart(raising, lowering))
             st.caption(WHY_LEGEND)
+            st.caption(f"Calibrated model score {float(me['score']):.2f}, calibrated across all modules.")
         with st.expander("In words, and all inputs"):
-            st.write(expl.sentence)
-            st.dataframe(explanation_table(expl), hide_index=True)
+            st.write(shown.sentence)
+            st.dataframe(inputs_table(shown), hide_index=True)
     with support:
         if rec is None:
             st.info(pool_l.message)
         else:
-            support_cards(expl, rec)
+            support_cards(shown, rec)
 
 
 def page_student() -> None:
@@ -993,8 +1032,7 @@ def review_table(fs: FlagState, pres: str) -> None:
                                     "Main reason": st.column_config.TextColumn(width="medium"),
                                     "Suggested support": st.column_config.TextColumn(width="medium")})
     if not details["prepared"].all():
-        st.caption(f"Reasons and suggestions are prepared for the top {MAX_LIVE_REASONS} students of this "
-                   "presentation. Open any other student to see theirs.")
+        st.caption(f"Reasons and suggestions are prepared for the first {MAX_LIVE_REASONS} students listed.")
     st.caption("Select a row to open the student. " + PSEUDONYM_NOTE)
     export = listing.assign(score_source=score_source(pres))
     st.download_button("Download the list (CSV)", export.to_csv(index=False),
@@ -1007,21 +1045,26 @@ def page_overview() -> None:
         return
     pres, in_sample = ctl.presentation, ctl.in_sample
     fs = flag_state(ctl)
-    outcome, tag = fs.outcome, " (in-sample)" if in_sample else ""
+    outcome = fs.outcome
     cards = st.columns(4)
     kpi_card(cards[0], "students", ":material/groups:", "Students in view", f"{outcome.students:,}",
              "Students in the selected presentation and module.")
     kpi_card(cards[1], "flagged", ":material/flag:", "Flagged for contact", f"{outcome.flagged:,}",
              (f"{outcome.flagged / outcome.students:.0%} of the students in view, highest risk first."
               if outcome.students else None), outcome.flagged / outcome.students if outcome.students else None)
-    kpi_card(cards[2], "precision", ":material/target:", "Precision of the flags" + tag,
-             DASH if outcome.flagged == 0 else f"{outcome.precision:.0%}",
-             f"{outcome.caught:,} of the {outcome.flagged:,} flagged students went on to fail or withdraw.",
-             None if outcome.flagged == 0 else outcome.precision)
-    kpi_card(cards[3], "recall", ":material/how_to_reg:", "Share of at-risk students reached" + tag,
-             DASH if outcome.at_risk == 0 else f"{outcome.recall:.0%}",
-             f"{outcome.caught:,} of the {outcome.at_risk:,} students who went on to fail or withdraw are flagged; "
-             f"{outcome.missed:,} are not.", None if outcome.at_risk == 0 else outcome.recall)
+    if in_sample:
+        kpi_card(cards[2], "precision", ":material/target:", "Precision of the flags", NOT_SHOWN, IN_SAMPLE_HELP)
+        kpi_card(cards[3], "recall", ":material/how_to_reg:", "Share of at-risk students reached", NOT_SHOWN,
+                 IN_SAMPLE_HELP)
+    else:
+        kpi_card(cards[2], "precision", ":material/target:", "Precision of the flags",
+                 DASH if outcome.flagged == 0 else f"{outcome.precision:.0%}",
+                 f"{outcome.caught:,} of the {outcome.flagged:,} flagged students went on to fail or withdraw.",
+                 None if outcome.flagged == 0 else outcome.precision)
+        kpi_card(cards[3], "recall", ":material/how_to_reg:", "Share of at-risk students reached",
+                 DASH if outcome.at_risk == 0 else f"{outcome.recall:.0%}",
+                 f"{outcome.caught:,} of the {outcome.at_risk:,} students who went on to fail or withdraw are "
+                 f"flagged; {outcome.missed:,} are not.", None if outcome.at_risk == 0 else outcome.recall)
     st.caption(rule_caption(ctl))
 
     left, right = st.columns(2)
@@ -1030,12 +1073,12 @@ def page_overview() -> None:
     with right.container(border=True, key="card-reasons"):
         if fs.details is None:
             st.info("No student in view is flagged with this rule.")
+        elif not fs.details["prepared"].all():
+            st.markdown("**Main reasons behind flags**")
+            st.info(f"Available for the validation presentation ({TEST_PRESENTATION}).")
         else:
-            counts = reason_counts(fs.details.loc[fs.details["prepared"], "main_factor"])
-            if counts.sum():
-                show_chart(reasons_chart(counts, int(counts.sum())))
-            if not fs.details["prepared"].all():
-                st.caption(f"Counted over the {int(counts.sum()):,} students whose reasons are prepared.")
+            counts = reason_counts(fs.details["main_factor"])
+            show_chart(reasons_chart(counts, int(counts.sum())))
 
     with st.container(border=True, key="card-review"):
         st.markdown("#### Students requiring review")

@@ -253,3 +253,15 @@ def at_risk_by_activity(matrix: pd.DataFrame, presentation: str, module: str | N
         part = part[part["code_module"] == module]
     days = pd.cut(part["active_days"], DAY_BANDS[0], labels=DAY_BANDS[1]).rename("day_band")
     return _rates(part.groupby(days, observed=False))
+
+
+def band_outcome(scored: pd.DataFrame, module: str, band: str, min_cell: int = MIN_CELL) -> tuple[float, int, str]:
+    """(observed at-risk rate, students, scope) of one band in one module, from band_evidence. When the module
+    has fewer than `min_cell` students in the band, the band's rate across all modules is used instead and the
+    scope is "All modules"."""
+    ev = band_evidence(scored, min_cell)
+    for scope in (module, "All modules"):
+        row = ev[(ev["code_module"] == scope) & (ev["band"] == band)]
+        if len(row) and row["students"].iloc[0] >= min_cell:
+            return float(row["at_risk_rate"].iloc[0]), int(row["students"].iloc[0]), scope
+    return float("nan"), 0, "All modules"

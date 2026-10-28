@@ -166,11 +166,12 @@ def build_sentence(expl: Explanation, n_reasons: int = 3, course_min: float = 0.
         parts.append(f"Lowering it most: {_join(list(favour['phrase']))}.")
     course = expl.contributions[expl.contributions["group"] == "course"]
     course = course[course["contribution"].abs() >= course_min]
+    clauses = []
     for way, rows in [("raise", course[course["contribution"] > 0]), ("lower", course[course["contribution"] < 0])]:
         if len(rows):
-            verb = way + ("s" if len(rows) == 1 else "")
-            parts.append(f"Course-level patterns, not about the student: {_join(list(rows['phrase']))} "
-                         f"also {verb} it.")
+            clauses.append(f"{_join(list(rows['phrase']))} {way + ('s' if len(rows) == 1 else '')} it")
+    if clauses:
+        parts.append(f"Course-level patterns, not about the student: {' and '.join(clauses)}.")
     if len(expl.background()):
         parts.append("Background factors are shown separately and are not used as reasons.")
     else:

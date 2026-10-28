@@ -201,28 +201,41 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
     text = _texts(tab)
     assert f"### :material/person: Student {sid}" in text and f"Module **{module}** · Presentation 2014J" in text
     assert "This is a model prediction. It supports, and does not replace, professional judgment." in text
-    ring = [s for s in _chart_specs(at) if s["data"][0].get("hole") == 0.78][0]
     from sar.service import views
     scored = views.score_presentation(load_final_model(synthetic_env / "models").value.fitted, matrix, "2014J")
-    score = scored.loc[(scored["code_module"] == module) & (scored["id_student"] == sid), "score"].iloc[0]
-    assert ring["layout"]["annotations"][0]["text"] == f"<b>{score:.0%}</b>"
-    assert ring["data"][0]["values"] == pytest.approx([score, 1 - score])
+    me = scored[(scored["code_module"] == module) & (scored["id_student"] == sid)].iloc[0]
+    rate, n, scope = views.band_outcome(scored, module, str(me["band"]))
+    ring = [s for s in _chart_specs(at) if s["data"][0].get("hole") == 0.78][0]
+    assert ring["layout"]["annotations"][0]["text"] == f"<b>{rate:.0%}</b>"
+    assert ring["data"][0]["values"] == pytest.approx([rate, 1 - rate])
+    assert "**Observed outcome for this band**" in text and f"(n = {n:,})" in text
+    where = f"in module {module}" if scope == module else "across all modules"
+    assert f"of 2014J students in the {me['band']} band {where} went on to fail or withdraw" in text
+    assert f"Calibrated model score {me['score']:.2f}, calibrated across all modules." in text
+    assert "Estimated risk" not in text
     assert [t.label for t in tab.tabs] == ["Overview", "Day 30 indicators", "Why this score", "Support"]
     assert re.search(r'class="pill pill-(high|medium|low)">(High|Medium|Low) risk</span>', text)
     assert re.search(rf"ranked \d+ of [\d,]+ in module", text)
     why = [s for s in _chart_specs(at) if s["layout"].get("title", {}).get("text") == "What moves this score"][0]
     traces = {t["name"]: t for t in why["data"]}
-    assert set(traces) == {"Raises risk", "Lowers risk"} and why["layout"]["xaxis"]["title"]["text"] == "Effect on risk"
+    assert set(traces) == {"Raises risk", "Lowers risk"}
+    assert why["layout"]["xaxis"]["title"]["text"].startswith("Change in the raw forest score")
     assert traces["Raises risk"]["marker"]["color"] == "#ff5d73" and all(x > 0 for x in traces["Raises risk"]["x"])
     assert all(x <= 0 for x in traces["Lowers risk"]["x"])
     shown = [p for t in why["data"] for p in t["customdata"]]
+    assert len(traces["Raises risk"]["x"]) <= 4 and len(traces["Lowers risk"]["x"]) <= 2
     assert 1 <= len(shown) <= 6 and not any(p.startswith("being on module") for p in shown)
+    verdict = [m.value for m in tab.markdown if m.value.startswith(("The risk score", "No activity"))][0]
+    named = re.findall(r"(?:raised most by|lowered most by) (.+?)\.(?: |$)", verdict)
+    assert all(p in shown for chunk in named for p in re.split(r", | and ", chunk))
+    assert ("It is lowered most by" in verdict) == bool(traces["Lowers risk"]["x"])
     assert all(len(line) <= 30 for t in why["data"] for y in t["y"] for line in y.split("<br>"))
     assert "Red bars raise the risk score and teal bars lower it" in text
     assert re.search(r"(The risk score is raised most by|No activity, assessment or study-load input raises)", text)
-    assert "Primary</span>" in text and text.count("descriptive, not evidence of effectiveness") == 1
-    assert re.search(r"Among [\d,]+ similar earlier students, [\d,]+ ended at risk\.", text)
-    assert "most similar students from earlier presentations" in text and "OULAD records no interventions" in text
+    assert text.count("descriptive, not evidence of effectiveness") == 1 and "OULAD records no interventions" in text
+    assert re.search(r"Similar earlier students: the [\d,]+ students (in module \w+|across all modules) from the "
+                     r"training presentations", text)
+    assert "similar earlier students, " not in text                       # no longer on the primary card
     assert "Too few similar students" not in text and "linked to" not in text
     snap = snapshot(matrix, "2014J", module, sid, {"active_days": "Active days", "n_missed": "Assessments missed"})
     metrics = {m.label: m for m in tab.metric}
@@ -412,8 +425,10 @@ def test_training_presentations_appear_only_after_opting_in(tables_env):
 def test_training_presentation_metrics_are_labelled_in_sample(synthetic_env):
     at = _open_training(AppTest.from_file(APP, default_timeout=120).run())
     assert not at.exception
-    labels = {m.label for m in at.metric}
-    assert {"Precision of the flags (in-sample)", "Share of at-risk students reached (in-sample)"} <= labels
+    cards = {m.label: m for m in at.metric}
+    for label in ["Precision of the flags", "Share of at-risk students reached"]:
+        assert cards[label].value == "Not shown"
+        assert cards[label].help == "In-sample scores are optimistic and not informative."
     by_module = [df.value for df in at.dataframe if "Flagged share" in df.value.columns][0]
     assert "Recall" not in by_module.columns
     assert "shown for 2014J only" in _texts(at)
@@ -621,7 +636,8 @@ def test_without_precomputed_explanations_only_the_top_rows_get_reasons(syntheti
     assert len(listing) > 50
     opened = listing["Main reason"] == "Open the student to see"
     assert not opened.iloc[:50].any() and opened.iloc[50:].all()
-    assert "prepared for the top 50 students" in _texts(at)
+    assert "Reasons and suggestions are prepared for the first 50 students listed." in _texts(at)
+    assert "Available for the validation presentation (2014J)." in _texts(at)
 
 
 def test_navigation_renders_only_the_selected_page(synthetic_env):

@@ -64,15 +64,55 @@ def test_support_sentence_names_the_fact_then_the_support():
     assert priority.similar_line(50, 1) == "Among 50 similar earlier students, 1 ended at risk."
 
 
-def test_verdict_sentence_names_the_main_drivers(explained):
+def test_chart_factors_and_verdict_name_only_shown_actionable_factors(explained):
     part, features, base, contrib, raw = explained
-    for i in part.index[:10]:
+    for i in part.index[:20]:
         expl = explanation_from_contributions(part.loc[i, features], contrib.loc[i], base, raw.loc[i], "High")
-        text = priority.verdict_sentence(expl)
-        raising, lowering = list(expl.reasons(2)["phrase"]), list(expl.in_favour(1)["phrase"])
-        assert all(p in text for p in raising + lowering) and text.endswith(".")
-        assert text.startswith("The risk score is raised most by" if raising else "No activity")
-        assert "module" not in text.replace("before the module started", "")
+        raising, lowering = priority.chart_factors(expl)
+        assert len(raising) <= 4 and len(lowering) <= 2
+        assert set(raising.index) | set(lowering.index) <= set(ACTIONABLE_FEATURES)
+        assert (raising["contribution"] >= MIN_CONTRIBUTION).all()
+        assert (lowering["contribution"] <= -MIN_CONTRIBUTION).all()
+        c = expl.contributions[expl.contributions.index.isin(ACTIONABLE_FEATURES)]
+        if (c["contribution"] <= -MIN_CONTRIBUTION).any():
+            assert len(lowering) and lowering.index[0] == c["contribution"].idxmin()
+        text = priority.verdict_sentence(raising, lowering)
+        named = [p for p in c["phrase"] if p in text]
+        assert set(named) <= set(raising["phrase"]) | set(lowering["phrase"])
+        assert ("It is lowered most by" in text) == bool(len(lowering))
+        if not len(lowering):
+            assert text.endswith("No activity, assessment or study-load input lowers it noticeably.")
+
+
+def test_a_weightless_score_is_not_a_reason_or_a_trigger(explained):
+    part, features, base, contrib, raw = explained
+    i = part.index[0]
+    values = part.loc[i, features].copy()
+    values["mean_score"], values["weighted_score"] = 100.0, float("nan")
+    boosted = contrib.loc[i].copy()
+    boosted["weighted_score"] = 0.5                                  # the gap would dominate if it were used
+    expl = priority.for_reasons(explanation_from_contributions(values, boosted, base, raw.loc[i], "Low"))
+    assert expl.contributions.loc["weighted_score", "contribution"] == 0.0
+    assert expl.contributions.loc["weighted_score", "phrase"] == priority.WEIGHTLESS
+    raising, _ = priority.chart_factors(expl)
+    assert "weighted_score" not in raising.index
+    details = priority.priority_details(pd.DataFrame([values]), pd.DataFrame([boosted]))
+    assert details["main_factor"].iloc[0] != "weighted_score"
+    assert "weighted" not in details["suggested_support"].iloc[0]
+
+
+def test_low_band_gets_a_suggestion_only_for_missed_work_or_inactivity():
+    from types import SimpleNamespace
+
+    def rec(band_low, driver):
+        s = SimpleNamespace(drivers=[driver], label="Tutoring")
+        return SimpleNamespace(suggestions=[s], optional=band_low)
+
+    assert priority.primary_for(rec(True, "mean_score")) is None
+    assert priority.primary_for(rec(True, "n_missed")) is not None
+    assert priority.primary_for(rec(True, "trailing_inactive_days")) is not None
+    assert priority.primary_for(rec(False, "mean_score")) is not None
+    assert priority.primary_for(SimpleNamespace(suggestions=[], optional=False)) is None
 
 
 def test_reason_counts_group_kinds_and_put_small_ones_in_other():

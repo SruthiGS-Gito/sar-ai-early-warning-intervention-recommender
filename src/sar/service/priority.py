@@ -8,18 +8,31 @@ The same rules as the single-student views, applied to a table of SHAP contribut
 Neither needs the similar-student pool, so the whole list can be filled from precomputed values.
 
 The student view's wording also lives here: one plain sentence per suggested support type, built from
-the Day 30 fact that matched it, and a short line on similar earlier students.
+the Day 30 fact that matched it, the factors the chart shows and the sentence that names them, and the
+definition of the similar-student group.
+
+Recording artefacts are not reasons. In some modules the only assessment due by Day 30 carries zero
+weight, so a student with an average score has no weighted score. That gap says nothing about the
+student, so it gets no contribution in reasons, charts and suggestions, and is described as "submitted
+work carries no weight yet".
 """
+
+import dataclasses
 
 import numpy as np
 import pandas as pd
 
-from sar.explain.factors import phrase
+from sar.explain.factors import family_of, phrase
 from sar.explain.shap_explain import MIN_CONTRIBUTION
 from sar.recommend.interventions import ACTIONABLE_FEATURES, FEATURE_TO_INTERVENTIONS, INTERVENTIONS, label
 
 NO_REASON = "No activity, assessment or study-load input raises the score noticeably"
 NO_SUPPORT = "None matched"
+WEIGHTLESS = "submitted work carries no weight yet"
+# At Day 30 a Low-band student gets a suggestion only for a concrete problem: a missed assessment or
+# a spell without activity.
+LOW_BAND_DRIVERS = ("n_missed", "max_consecutive_inactive_days", "trailing_inactive_days")
+NO_LOW_SUGGESTION = "No specific support suggested at Day 30."
 # What each support type offers, written to follow the Day 30 fact that matched it.
 SUPPORT_ACTIONS = {
     "tutoring": "a tutor can go over the module content and the next assessment with them.",
@@ -44,18 +57,67 @@ def similar_line(n: int, n_at_risk: int) -> str:
     return f"Among {n:,} similar earlier students, {n_at_risk:,} ended at risk."
 
 
+def similar_definition(neighbours) -> str:
+    """How the similar-student group is built, and what it found, in plain words."""
+    where = f"in module {neighbours.module}" if neighbours.same_module else "across all modules"
+    text = (f"Similar earlier students: the {neighbours.n:,} students {where} from the training presentations "
+            f"({', '.join(neighbours.presentations)}) whose Day 30 activity, assessment and study-load inputs are "
+            "closest to this student's. Background characteristics are not used, and students who also appear in "
+            f"the validation presentation are left out. {neighbours.n_at_risk:,} of them ended at risk (Fail or "
+            "Withdrawn). They are matched on inputs, not on the model's score, so this share can differ from the "
+            "band's observed outcome.")
+    return f"{text} {neighbours.note}" if neighbours.note else text
+
+
 def _join(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
-def verdict_sentence(expl) -> str:
-    """One plain sentence on the main drivers, from the explanation's reasons and inputs in favour."""
-    raising, lowering = list(expl.reasons(2)["phrase"]), list(expl.in_favour(1)["phrase"])
-    if raising:
-        text = f"The risk score is raised most by {_join(raising)}"
-        return text + (f", and lowered most by {lowering[0]}." if lowering else ".")
-    text = "No activity, assessment or study-load input raises the risk score noticeably"
-    return text + (f"; it is lowered most by {lowering[0]}." if lowering else ".")
+def artefacts(values: pd.Series) -> list[str]:
+    """Inputs whose value is a recording artefact for this student, not a fact about them."""
+    weightless = pd.isna(values.get("weighted_score")) and pd.notna(values.get("mean_score"))
+    return ["weighted_score"] if weightless else []
+
+
+def for_reasons(expl):
+    """A copy of the explanation for reasons, charts and suggestions: artefacts get no contribution and a
+    phrase that says what the gap means. The full table keeps the model's own values."""
+    c = expl.contributions.copy()
+    for f in artefacts(c["value"]):
+        c.loc[f, "contribution"] = 0.0
+        c.loc[f, "phrase"] = WEIGHTLESS
+    return dataclasses.replace(expl, contributions=c)
+
+
+def chart_factors(expl, n_raise: int = 4, n_lower: int = 2) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The actionable inputs the factor chart shows: up to `n_raise` that raise the score and up to `n_lower`
+    that lower it, each by at least MIN_CONTRIBUTION, strongest first. Course-level inputs are left out."""
+    c = expl.contributions[expl.contributions.index.isin(ACTIONABLE_FEATURES)]
+    raising = c[c["contribution"] >= MIN_CONTRIBUTION].sort_values("contribution", ascending=False).head(n_raise)
+    lowering = c[c["contribution"] <= -MIN_CONTRIBUTION].sort_values("contribution").head(n_lower)
+    return raising, lowering
+
+
+def verdict_sentence(raising: pd.DataFrame, lowering: pd.DataFrame) -> str:
+    """Plain sentences on the main drivers, naming only factors the chart shows (one per family)."""
+    up = list(raising[~raising.index.map(family_of).duplicated()]["phrase"].head(2))
+    down = list(lowering["phrase"].head(1))
+    first = (f"The risk score is raised most by {_join(up)}." if up
+             else "No activity, assessment or study-load input raises the risk score noticeably.")
+    second = (f"It is lowered most by {down[0]}." if down
+              else "No activity, assessment or study-load input lowers it noticeably.")
+    return f"{first} {second}"
+
+
+def primary_for(rec):
+    """The suggestion to show first, or None. For a Low-band student only a missed assessment or a spell
+    without activity leads to a suggestion."""
+    if not rec.suggestions:
+        return None
+    first = rec.suggestions[0]
+    if rec.optional and first.drivers[0] not in LOW_BAND_DRIVERS:
+        return None
+    return first
 
 
 # Kinds of main reason, for counting the flagged students: a main reason names one input, and the
@@ -103,6 +165,10 @@ def short_reason(text: str) -> str:
 def priority_details(values: pd.DataFrame, contributions: pd.DataFrame) -> pd.DataFrame:
     """One row per row of `contributions` (same index): main_factor, main_reason and suggested_support.
     `values` holds the students' inputs with the same index."""
+    contributions = contributions.copy()
+    if {"weighted_score", "mean_score"} <= set(values.columns) and "weighted_score" in contributions.columns:
+        weightless = (values["weighted_score"].isna() & values["mean_score"].notna()).reindex(contributions.index)
+        contributions.loc[weightless.to_numpy(), "weighted_score"] = 0.0          # see artefacts()
     feats = [f for f in contributions.columns if f in ACTIONABLE_FEATURES]     # model input order, as in idxmax
     c = contributions[feats].to_numpy(dtype=float)
     raising = np.where(c >= MIN_CONTRIBUTION, c, 0.0)
