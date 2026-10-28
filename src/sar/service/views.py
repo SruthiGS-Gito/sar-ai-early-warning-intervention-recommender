@@ -1,4 +1,4 @@
-"""SCRUM-189: tables behind the app's Batch Report and Student Lookup tabs.
+"""SCRUM-189: scoring, flagging and summary tables behind the app's pages.
 
 Scoring uses the final model (sar.models.final): calibrated risk score, risk band and rank.
 Students are flagged by ranking, not by one fixed threshold:

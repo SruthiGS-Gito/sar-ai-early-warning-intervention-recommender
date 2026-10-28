@@ -1,4 +1,4 @@
-"""Precompute SHAP explanations of the final model for whole presentations, for the app's Student Lookup.
+"""Precompute SHAP explanations of the final model for whole presentations, for the app's Student page.
 
 Run from the repo root, after scripts/train_final.py:
     python scripts/precompute_shap.py                       # the validation presentation (2014J)
