@@ -4,7 +4,7 @@
 
 Submitted as part of the AI/ML Internship, TrackGenesis (ICT Academy of Kerala)
 
-Team 8: Sruthi G S, Ancy Michael, Abhijith M S, Gouri, Midhula
+Team 8: Sruthi G S, Ancy Michael, Abhijith M S, Gouri M, Midhula M
 
 Submission date: 30 October 2026
 
@@ -171,7 +171,7 @@ The calibrator and every cutoff come from out-of-fold scores on the training pre
 
 **Logistic regression baseline.** The Review 1 baseline is a logistic regression on 30 inputs (the 24 final inputs and the six protected characteristics). On 2014J it reaches ROC-AUC 0.733 and PR-AUC 0.625.
 
-**Random Forest and XGBoost.** The comparison of tree models was carried out in the tuning notebook contributed by Midhula (`notebooks/xgboost-random-forest (2).ipynb`, with a later version in `notebooks/xgboost-random-forest (4).ipynb`). On the same split and 30 inputs, at a threshold of 0.5 on 2014J, the notebook reports:
+**Random Forest and XGBoost.** The comparison of tree models was carried out in the tuning notebook contributed by Midhula M (`notebooks/xgboost-random-forest (2).ipynb`, with a later version in `notebooks/xgboost-random-forest (4).ipynb`). On the same split and 30 inputs, at a threshold of 0.5 on 2014J, the notebook reports:
 
 | Model | Recall | Precision | PR-AUC | ROC-AUC |
 |---|---:|---:|---:|---:|
@@ -486,15 +486,15 @@ Contributions below follow the Review 1 sprint scope (`docs/review1_scope.md`) a
 - Review 1 tasks: download of OULAD and first inspection (114), loader for the seven tables (103), cleaning of student data and join-key checks (104), dataset choice and proxy decisions (105), and processed tables for the dashboard and funnel (202).
 - Repository: data preparation notebooks, including an earlier retention funnel analysis notebook (since removed from the repository) and the first version of the data notebook `student_academic_risk.ipynb`.
 
-**Gouri**
+**Gouri M**
 - Review 1 tasks: engagement metrics up to Day 30 (107), consecutive inactive days (108), engagement-by-outcome charts (116) and withdrawal timing analysis (204).
 - Repository: the engagement profile notebook (`Engagement profile charts and export.ipynb`), which clusters Day 30 engagement with KMeans and compares cluster counts by silhouette and inertia, and an engagement clustering section added to `student_academic_risk.ipynb`.
 
-**Midhula**
+**Midhula M**
 - Review 1 tasks: target definition and Day 30 population (111), assessment features (211) and the baseline logistic regression model (112).
 - Repository: the Random Forest and XGBoost tuning notebook (`xgboost-random-forest (2).ipynb`, with a later version `xgboost-random-forest (4).ipynb`), which compares both models with the baseline, selects the Random Forest and tunes the hyperparameters used in the final model, together with its description in `notebooks/README.md`.
 
-**Integration after Review 1.** After Review 1, the remaining integration was completed by Sruthi G S with the agreement of the team: the final model, calibration, explanations, recommender, team tables, application, tests and documentation. Teammates' notebooks served as references for this work: the Random Forest and XGBoost tuning notebook (Midhula) for the model choice and hyperparameters; the retention funnel analysis in notebook 206 (Ancy Michael) for the funnel stages; the engagement profile notebook (Gouri) for the profile features and the range of cluster counts; and the data notebook `student_academic_risk.ipynb` (Abhijith M S and Gouri) for the data preparation steps.
+**Integration after Review 1.** After Review 1, the remaining integration was completed by Sruthi G S with the agreement of the team: the final model, calibration, explanations, recommender, team tables, application, tests and documentation. Teammates' notebooks served as references for this work: the Random Forest and XGBoost tuning notebook (Midhula M) for the model choice and hyperparameters; the retention funnel analysis in notebook 206 (Ancy Michael) for the funnel stages; the engagement profile notebook (Gouri M) for the profile features and the range of cluster counts; and the data notebook `student_academic_risk.ipynb` (Abhijith M S and Gouri M) for the data preparation steps.
 
 # 5. PROJECT LINK AND REFERENCES
 
