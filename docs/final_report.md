@@ -44,7 +44,7 @@ Protected characteristics (gender, region, highest education, deprivation band, 
 
 A student registers for a module two weeks before it starts. By Day 30 the student has been active on the module website on three days, the last of them in the second week, and has missed the first assessment, which was due in week three. The student is studying a second module at the same time.
 
-On Day 30 the support team opens the application with a capacity of 20%. The student appears in the High band near the top of the ranked list. The Student page gives the reasons: a long spell without activity before Day 30, a missed assessment and few active days. It also shows the observed outcome of the High band in this module in the validation presentation, as a group rate. The suggested support is weekly check-ins, with mentoring as an alternative, and the page describes what similar students from earlier presentations looked like on Day 30.
+On Day 30 the support team opens the application with a capacity of 20%. The student appears in the High band near the top of the ranked list. The Student page gives the reasons: a long spell without activity before Day 30, a missed assessment and few active days. A ring shows the observed outcome of the High band in this module in the validation presentation: the share of those students who went on to fail or withdraw, a group statistic rather than a personal probability. The suggested support is weekly check-ins, with mentoring as an alternative, and the page describes what similar students from earlier presentations looked like on Day 30.
 
 A tutor contacts the student in the following week. The decision to contact, and the form of the contact, remain with the tutor; the application supports that judgment.
 
@@ -225,7 +225,7 @@ At the default capacity of 20%, eight in ten flagged students go on to fail or w
 | top_30 | top 30% of scores | 0.579 |
 | wide_net | recall of at least 0.80 | 0.333 |
 
-Three risk bands start at two of these cutoffs: Low below 0.333, Medium from 0.333 to below 0.650, and High from 0.650. The application shows each student's band and rank, and keeps the score itself off screen.
+Three risk bands start at two of these cutoffs: Low below 0.333, Medium from 0.333 to below 0.650, and High from 0.650. The application shows each student's band and rank; the calibrated score appears only under the Student page's "Why this score" tab.
 
 **What the bands mean.** Observed outcomes of each band in 2014J:
 
@@ -283,7 +283,7 @@ The reliability table for the calibrated score on 2014J compares the mean calibr
 
 ROC-AUC ranges from 0.766 to 0.801 and precision at the top_20 cutoff from 0.811 to 0.879. The 2014J figures are at the lower end of this range, and the share flagged by a fixed cutoff varies with prevalence, as described in Section 3.6.
 
-**Comparison with simpler approaches.** Ranking students by Day 30 clicks alone gives ROC-AUC 0.66 on the Day 30 population (Figure 6). The logistic regression baseline reaches ROC-AUC 0.733 and PR-AUC 0.625 on 2014J. At 20% capacity, its precision is 0.676 and its recall 0.332, against 0.800 and 0.393 for the final model. For a team contacting 1,841 students, the final model's list contains 0.800 × 1,841 ≈ 1,472 at-risk students, against about 1,244 for the baseline.
+**Comparison with simpler approaches.** Ranking students by Day 30 clicks alone gives ROC-AUC 0.66 (Figure 6). This figure covers the Day 30 population of all four presentations, so it is an indicative comparison and not a like-for-like comparison with the 2014J results below. The logistic regression baseline reaches ROC-AUC 0.733 and PR-AUC 0.625 on 2014J. At 20% capacity, its precision is 0.676 and its recall 0.332, against 0.800 and 0.393 for the final model. For a team contacting 1,841 students, the final model's list contains 0.800 × 1,841 ≈ 1,472 at-risk students, against about 1,244 for the baseline.
 
 **Recall by module.** With 20% capacity applied across the whole 2014J cohort, recall within each module is:
 
@@ -299,6 +299,8 @@ ROC-AUC ranges from 0.766 to 0.801 and precision at the top_20 cutoff from 0.811
 | All modules | 9,203 | 1,841 | 0.407 | 0.393 | 0.800 |
 
 GGG (0.210) and BBB (0.226) have the lowest recall. A cohort-wide ranking concentrates contacts in modules with higher scores, so the application also offers capacity applied to each module separately.
+
+**Source of the additional figures.** The paired bootstrap difference in Section 3.3 and the recall by module above are not stored in `metrics.json`. They were computed for this report with the repository's own code on the committed final model: the paired bootstrap uses the same fitting and scoring functions and the same resampling settings as `metrics.json` (1,000 resamples, seed 42), and refitting the 30-input model reproduced its ROC-AUC in `metrics.json` exactly. The recall by module uses the application's capacity ranking, which reproduces the committed capacity table, and involves no random sampling.
 
 ## 3.8 Fairness Audit
 
@@ -332,7 +334,7 @@ No group-specific thresholds were applied. Setting a different cutoff for each g
 
 The 24 inputs fall into three explanation groups. Behaviour inputs (activity, inactivity, submissions, scores, delays, missed work and registration timing) and study inputs (previous attempts and credits studied) can be named as reasons. Course inputs (module and assessments due) are described as course-level patterns about the module. Protected characteristics have no contribution because they are excluded from the model.
 
-**Plain-language sentences.** A sentence names the student's risk band and at most three inputs that raise the score and two that lower it. It names one input per idea (average score and weighted score count once), and each named input must move the score by at least 0.005. Sentences state the band, and leave the score off. An automated test checks, for a sample of students, that no protected characteristic appears as an input, a driver, a phrase, a chart label or a word in the text.
+**Plain-language sentences.** A sentence names the student's risk band and at most three inputs that raise the score and two that lower it. It names one input per idea (average score and weighted score count once), and each named input must move the score by at least 0.005. Sentences state the band and leave the score out. The calibrated score appears once, under the Student page's "Why this score" tab, with the note that it is calibrated across all modules. An automated test checks, for a sample of students, that no protected characteristic appears as an input, a driver, a phrase, a chart label or a word in the text.
 
 **Rule-based support suggestions.** Only actionable inputs, those a support contact can respond to, drive a suggestion. Of the 24 inputs, 21 are actionable; the module, assessments due and previous attempts are excluded. Each actionable input maps to one or two of five support types with weights that sum to 1:
 
@@ -408,14 +410,26 @@ The Streamlit application is organised around a tutor's workflow: see who to con
 | Page | What it shows |
 |---|---|
 | Overview | Four summary cards (students in view, flagged for contact, precision and at-risk reached); a donut of the Low, Medium and High bands; the main reasons behind flags; and the ranked list of flagged students with module, band, a Day 30 snapshot, main reason and suggested support. The list downloads as CSV. |
-| Student | A header with the student's band and rank in the module, and the observed outcome of that band in the module on 2014J as a group rate. Four tabs: an overview with the verdict and primary suggestion, six Day 30 indicators compared with the module median, the factors that raise and lower the score, and the support suggestions with similar-student context. |
+| Student | Example buttons and selectors for module and student ID. A header card with the student ID, module and presentation, the band and the rank in the module, and a ring labelled "Observed outcome for this band": the share of 2014J students in the same band and module whose final result was Fail or Withdrawn, with n. This is a group statistic rather than a personal probability. Four tabs: Overview (the verdict and primary suggestion), Day 30 indicators (six indicators compared with the module median), Why this score (the inputs that raise and lower the raw forest score, and the calibrated score, shown only here) and Support (the suggestions with similar-student context). |
 | Modules | One card per module with its at-risk rate and band shares; band shares by module; at-risk rate by intake and by active days; the student profiles; the retention funnel; and, in collapsed sections, the data tables and the calibration chart for 2014J. |
 | Support | One card per support type with its definition and the number of flagged students for whom it is the primary suggestion; charts of the counts overall and by module; and a note that suggestions are rule-based and that OULAD has no intervention records. |
 | About | The model, the design and validation, the risk bands and how to read them, capacity flagging, limitations (including the lowest module recalls and the group recall gaps), the OULAD licence and citation, and the rebuild commands. |
 
 **Validation by default.** The application opens on 2014J, the validation presentation. A training presentation is offered only after the user turns on "Show training presentations (in-sample scores)" under Advanced. It is then labelled as in-sample in the presentation list, in a sidebar warning, on the cards and in every exported table, and the precision and recall cards read "Not shown", because in-sample scores are optimistic.
 
-**Display rules.** A student's risk is shown as a band and a rank, and the score stays off screen. Student identifiers appear only in the Overview list and on the Student page, and they are the pseudonymised identifiers published with OULAD. Every Student page ends with "This is a model prediction. It supports, and does not replace, professional judgment."
+**Display rules.** A student's risk is shown as a band and a rank; the calibrated score appears only under "Why this score". Student identifiers appear only in the Overview list and on the Student page, and they are the pseudonymised identifiers published with OULAD. The Student header card carries the sentence "This is a model prediction. It supports, and does not replace, professional judgment."
+
+**Screenshots.** Figures 7 to 11 show the application on the validation presentation, 2014J. The Overview page is shown with all modules and a contact capacity of 20%.
+
+*Figure 7. Overview page, 2014J (validation): summary cards, risk distribution and main reasons behind flags.*
+
+*Figure 8. Student page, Overview tab, 2014J (validation): header card with band, rank in module and the observed outcome ring for the band, followed by the verdict and primary suggestion. The student ID is a pseudonymised OULAD identifier.*
+
+*Figure 9. Student page, Why this score tab, 2014J (validation): inputs that raise the raw forest score and the calibrated score, calibrated across all modules.*
+
+*Figure 10. Modules page, module cards, 2014J (validation): observed at-risk rate, number of students and band shares for each module.*
+
+*Figure 11. Modules page, charts, 2014J (validation): observed at-risk rate by days active by Day 30 and by student profile.*
 
 **Performance.** The application caches the data, model, explainer and similar-student pool once, and caches scores per presentation. SHAP takes about 0.25 s per student on one core, so `scripts/precompute_shap.py` computes the validation presentation's explanations in advance; the ranked list and Student page read them, checked against the model file's hash. Training the final configuration, including the comparison models, the bootstrap and the leave-one-presentation-out runs, took 53.0 s in the run recorded in `models/final/config.json`.
 
