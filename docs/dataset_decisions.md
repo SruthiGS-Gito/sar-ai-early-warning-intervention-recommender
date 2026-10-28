@@ -32,11 +32,15 @@ Open University Learning Analytics Dataset (OULAD), 7 CSV tables, 7 modules (AAA
 - studentRegistration.date_registration: 45 rows (0.14%). date_unregistration: 22,521 rows (69.10%), where an empty value means the student did not unregister.
 - studentAssessment.score: 173 rows (0.10%).
 
-## Open items
-- 93 Withdrawn students without an unregistration date and 9 Fail students with one (102 records, all At Risk). Kept. Last-activity check against the recorded date is open.
-- Dates beyond course length: 1 unregistration (FFF 2013J, day 444) and 85 submissions (CMA 70, Exam 12, TMA 3), mostly FFF. All fall after Day 30, so the Day 30 filter removes them. 2,057 submissions before Day 0 are kept; the is_banked check is open.
-- studied_credits up to 655 and 23 click rows of 1,000 or more: kept, cause open.
+## Data quality decisions (closed)
+These items were open at Review 1. Each is closed with the decision below; the records are kept as published.
+- 93 Withdrawn students without an unregistration date and 9 Fail students with one (102 records, all At Risk). Kept. The target uses `final_result` only, and the Day 30 population excludes a student only when an unregistration date on or before Day 30 is recorded, so a missing date keeps the student in the population. No last-activity correction is applied.
+- Dates beyond course length: 1 unregistration (FFF 2013J, day 444) and 85 submissions (CMA 70, Exam 12, TMA 3), mostly FFF. All fall after Day 30, so the Day 30 filter removes them before any feature is built.
+- 2,057 submissions before Day 0. Kept: they are known by Day 30. Banked results (`is_banked` = 1) are excluded from the submission delay features (`src/sar/features/assessment.py`).
+- studied_credits up to 655 and 23 click rows of 1,000 or more. Kept as published, with no capping.
+
+## Protected characteristics
+The six demographic columns (gender, region, highest_education, imd_band, age_band, disability) are excluded from the final model's inputs, as recorded in `excluded_protected_features` in `models/final/config.json`. They are read only for the fairness audit. The final model has 24 inputs; see [final_model.md](final_model.md) for the configuration and the fairness results.
 
 ## Known limitations
 - Single institution, distance learning. Results may not transfer to a classroom setting.
-- Demographic columns are included in the data. Their use as model inputs needs a separate decision.
