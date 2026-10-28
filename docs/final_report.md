@@ -435,7 +435,7 @@ The Streamlit application is organised around a tutor's workflow: see who to con
 
 ## 3.12 Testing and Reproducibility
 
-**Tests.** The suite has 211 tests in 23 test files, and all 211 pass (run time 205.94 s). They cover:
+**Tests.** The suite has 211 tests in 24 test files, and all 211 pass (run time 205.94 s). They cover:
 
 - data loading, cleaning, the target and the Day 30 population;
 - the engagement, assessment and registration features, including the leakage tests;
