@@ -151,7 +151,8 @@ def test_priority_list_is_populated_on_first_load(synthetic_env, matrix, small_f
     assert at.radio(key="nav_page").value == "Overview"
     tab = at.main
     cards = {m.label: m.value for m in tab.metric}
-    assert list(cards) == CARDS and all(m.proto.show_border and m.help for m in tab.metric)
+    assert list(cards) == CARDS and all(m.help for m in tab.metric)
+    assert len(at.get("progress")) == 3                     # flagged share, precision and recall
     val = matrix[matrix["code_presentation"] == "2014J"]
     k = round(0.2 * len(val))
     assert cards["Students in view"] == f"{len(val):,}" and cards["Flagged for contact"] == f"{k:,}"
@@ -172,12 +173,16 @@ def test_priority_list_is_populated_on_first_load(synthetic_env, matrix, small_f
     assert list(listing["Main reason"]) == [priority.short_reason(r) for r in details["main_reason"]]
     assert list(listing["Suggested support"]) == details["suggested_support"].tolist()
     assert list(listing["Risk band"]) == top["band"].astype(str).tolist()
-    text = _texts(tab)
-    assert f"## Contact these {k:,} students first" in text
-    chips = re.findall(r":(\w+)-badge\[(.+): ([\d,]+)\]", text)
+    specs = {s["layout"]["title"]["text"]: s for s in _chart_specs(at)}
     counts = priority.reason_counts(details["main_factor"])
-    assert [(kind, int(n.replace(",", ""))) for _, kind, n in chips] == list(counts.items())
-    assert sum(counts) == k
+    reasons = specs["Main reasons behind flags"]["data"][0]
+    assert reasons["y"] == list(counts.index[::-1]) and sum(counts) == k
+    assert reasons["text"] == [f"{n:,} ({n / k:.0%})" for n in counts.iloc[::-1]]
+    donut = specs["Risk distribution"]["data"][0]
+    bands = scored["band"].astype(str).value_counts().reindex(["Low", "Medium", "High"], fill_value=0)
+    assert donut["values"] == bands.tolist() and donut["hole"] > 0
+    assert donut["labels"][2] == f"High: {bands['High']:,} ({bands['High'] / len(val):.0%})"
+    assert "Contact these" not in _texts(tab) and "-badge[" not in _texts(tab)
     assert any(b.proto.label == "Download the list (CSV)" for b in at.get("download_button"))
     assert "pseudonymised identifiers" in _texts(tab)
 
@@ -194,10 +199,18 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
     assert not at.exception
     tab = _tab(at, "Student")
     text = _texts(tab)
-    assert f"### Student {sid}" in text and f"Module **{module}**" in text
+    assert f"### :material/person: Student {sid}" in text and f"Module **{module}** · Presentation 2014J" in text
+    assert "This is a model prediction. It supports, and does not replace, professional judgment." in text
+    ring = [s for s in _chart_specs(at) if s["data"][0].get("hole") == 0.78][0]
+    from sar.service import views
+    scored = views.score_presentation(load_final_model(synthetic_env / "models").value.fitted, matrix, "2014J")
+    score = scored.loc[(scored["code_module"] == module) & (scored["id_student"] == sid), "score"].iloc[0]
+    assert ring["layout"]["annotations"][0]["text"] == f"<b>{score:.0%}</b>"
+    assert ring["data"][0]["values"] == pytest.approx([score, 1 - score])
+    assert [t.label for t in tab.tabs] == ["Overview", "Day 30 indicators", "Why this score", "Support"]
     assert re.search(r'class="pill pill-(high|medium|low)">(High|Medium|Low) risk</span>', text)
     assert re.search(rf"ranked \d+ of [\d,]+ in module", text)
-    why = [s for s in _chart_specs(at) if s["layout"]["title"]["text"] == "What moves this score"][0]
+    why = [s for s in _chart_specs(at) if s["layout"].get("title", {}).get("text") == "What moves this score"][0]
     traces = {t["name"]: t for t in why["data"]}
     assert set(traces) == {"Raises risk", "Lowers risk"} and why["layout"]["xaxis"]["title"]["text"] == "Effect on risk"
     assert traces["Raises risk"]["marker"]["color"] == "#ff5d73" and all(x > 0 for x in traces["Raises risk"]["x"])
@@ -207,7 +220,7 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
     assert all(len(line) <= 30 for t in why["data"] for y in t["y"] for line in y.split("<br>"))
     assert "Red bars raise the risk score and teal bars lower it" in text
     assert re.search(r"(The risk score is raised most by|No activity, assessment or study-load input raises)", text)
-    assert "Suggested support" in text and text.count("descriptive, not evidence of effectiveness") == 1
+    assert "Primary</span>" in text and text.count("descriptive, not evidence of effectiveness") == 1
     assert re.search(r"Among [\d,]+ similar earlier students, [\d,]+ ended at risk\.", text)
     assert "most similar students from earlier presentations" in text and "OULAD records no interventions" in text
     assert "Too few similar students" not in text and "linked to" not in text
@@ -216,11 +229,9 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
     for f, r in snap.iterrows():
         m = metrics[r["label"]]
         diff = r["difference"]
-        assert m.value == f"{r['value']:,.0f}"
-        if diff == 0:
-            assert m.delta == "same as module median"
-        else:
-            assert m.delta.endswith("vs module median") and m.delta.startswith("+" if diff > 0 else "-")
+        assert m.value == f"{r['value']:,.0f}" and not m.delta
+        word = "same as" if diff == 0 else "above" if diff > 0 else "below"
+        assert f"{word} module median" in text and f"Module median: {r['median']:,.0f}" in text
     assert "provisional" not in text.lower()
 
 
@@ -575,7 +586,7 @@ def test_example_buttons_choose_a_validation_student_in_the_band(synthetic_env, 
     assert (at.selectbox(key="lookup_module").value, at.selectbox(key="lookup_student").value) == expected
     text = _texts(at)
     assert f'">{band} risk</span>' in text and f"Module **{expected[0]}**" in text and "ranked " in text
-    assert "Suggested support" in text
+    assert "Primary</span>" in text
     expanders = [e.label for e in _tab(at, "Student").expander]
     if band == "Low":
         assert "Low risk: support is optional." in text and "Other options" not in expanders
@@ -636,3 +647,30 @@ def test_page_selections_survive_a_visit_to_another_page(synthetic_env):
     _go(_go(at, "Modules"), "Student")
     assert (at.selectbox(key="lookup_module").value, at.selectbox(key="lookup_student").value) == (module, sid)
     assert f"Student {sid}" in _texts(at.main)
+
+
+def test_review_table_filters_by_student_id_and_band(synthetic_env):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    full = _listing(at).value
+    target = full.iloc[3]
+    at.text_input(key="review_search").input(target["Student ID"]).run()
+    found = _listing(at).value
+    assert target["Student ID"] in set(found["Student ID"])
+    assert found["Student ID"].str.contains(target["Student ID"]).all()
+    assert at.session_state["priority_rows"][list(found["Student ID"]).index(target["Student ID"])] == (
+        target["Module"], int(target["Student ID"]))
+    at.text_input(key="review_search").input("").run()
+    band = full["Risk band"].iloc[-1]
+    at.selectbox(key="review_band").set_value(band).run()
+    assert set(_listing(at).value["Risk band"]) == {band}
+    assert list(_listing(at).value["Rank"]) == list(full.loc[full["Risk band"] == band, "Rank"])
+
+
+def test_training_student_shows_the_band_without_a_ring(synthetic_env, matrix):
+    at = _open_training(AppTest.from_file(APP, default_timeout=120).run(), "2013J")
+    part = matrix[matrix["code_presentation"] == "2013J"].iloc[0]
+    _open_student(at, part["code_module"], int(part["id_student"]))
+    assert not at.exception
+    text = _texts(at.main)
+    assert "(in-sample)" in text and "Training presentations have in-sample scores" in text
+    assert "Estimated risk" not in text and not [s for s in _chart_specs(at) if s["data"][0].get("hole") == 0.78]
