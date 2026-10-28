@@ -37,3 +37,13 @@ Thumbs.db
 
 # Archives
 *.zip
+
+# Documents, exports and screenshots kept outside the repository; reports/figures/ stays tracked
+/*.png
+/*.jpg
+*.docx
+*.pdf
+*.pptx
+
+# Streamlit secrets
+.streamlit/secrets.toml
