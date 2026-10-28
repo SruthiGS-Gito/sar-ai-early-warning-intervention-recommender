@@ -1,18 +1,20 @@
 """SCRUM-187: per-student SHAP explanations for a tree model pipeline.
 
-`explain_student(model, row, threshold)` returns an Explanation: the risk score, each input's
-contribution to it (SHAP value, one-hot columns added back into their original input), and
-a plain-language sentence.
+`explain_student(model, row, band=band)` returns an Explanation: the model score, each input's
+contribution to it (SHAP value, one-hot columns added back into their original input), the
+student's risk band (Low, Medium, High; see sar.config.RISK_BANDS) and a plain-language sentence.
+`explain_batch` computes contributions for many rows at once (optionally in parallel), and
+`explanation_from_contributions` builds an Explanation from stored batch values without recomputing.
 
 How the contributions are computed
   * shap.TreeExplainer with its default tree_path_dependent mode: the expected score comes from
     the training data stored in the trees, so no other data (and no validation data) is used
   * contributions plus the starting score add up to the model's score; this is checked
-  * background inputs (sar.explain.factors.BACKGROUND) are kept in the table but never named
-    as a main reason in the sentence
+  * background inputs (sar.explain.factors.BACKGROUND) are never named as a main reason; the final
+    model does not use them as inputs at all, so they have no contribution to show
 
-Wording: the score is a model output, not a probability, and contributions describe the model,
-not causes. Sentences say what "raises the score", never what caused an outcome.
+Wording: contributions describe the model's raw score, not causes. Sentences say what "raises the
+score", never what caused an outcome, and report the risk band rather than a number.
 """
 
 from dataclasses import dataclass
@@ -20,6 +22,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import shap
+from joblib import Parallel, delayed
 from sklearn.pipeline import Pipeline
 
 from sar.explain.factors import REASON_GROUPS, family_of, group_of, phrase
@@ -31,14 +34,10 @@ MIN_CONTRIBUTION = 0.005
 
 @dataclass
 class Explanation:
-    score: float
+    score: float                 # raw model score; the SHAP contributions add up to it
     base_score: float
-    threshold: float | None
+    band: str | None             # risk band from the calibrated score, if known
     contributions: pd.DataFrame  # index: feature; columns: value, contribution, group, phrase
-
-    @property
-    def flagged(self) -> bool | None:
-        return None if self.threshold is None else self.score >= self.threshold
 
     def _top(self, n: int, raises: bool) -> pd.DataFrame:
         """Largest contributions in one direction, behaviour and study groups only,
@@ -111,23 +110,45 @@ def explain_rows(model: Pipeline, X: pd.DataFrame, explainer: shap.TreeExplainer
     return base, contrib, scores
 
 
-def explain_student(model: Pipeline, row, threshold: float | None = None,
-                    explainer: shap.TreeExplainer | None = None) -> Explanation:
+def _explain_chunk(model: Pipeline, X: pd.DataFrame):
+    return explain_rows(model, X)
+
+
+def explain_batch(model: Pipeline, X: pd.DataFrame, n_jobs: int = 1, chunk_size: int = 200):
+    """explain_rows for many rows, split into chunks and run on `n_jobs` workers.
+
+    Returns (base_score, contributions, scores) in the row order of X.
+    """
+    X = X[list(model.feature_names_in_)]
+    if n_jobs == 1 or len(X) <= chunk_size:
+        return explain_rows(model, X)
+    chunks = [X.iloc[i:i + chunk_size] for i in range(0, len(X), chunk_size)]
+    parts = Parallel(n_jobs=n_jobs)(delayed(_explain_chunk)(model, c) for c in chunks)
+    return parts[0][0], pd.concat([p[1] for p in parts]), pd.concat([p[2] for p in parts])
+
+
+def explanation_from_contributions(values: pd.Series, contributions: pd.Series, base_score: float,
+                                   score: float, band: str | None = None) -> Explanation:
+    """Build an Explanation from one row of inputs and its precomputed contributions."""
+    table = pd.DataFrame({
+        "value": values,
+        "contribution": contributions.reindex(values.index).astype(float),
+        "group": [group_of(f) for f in values.index],
+        "phrase": [phrase(f, v) for f, v in values.items()],
+    })
+    table.index.name = "feature"
+    return Explanation(float(score), float(base_score), band, table)
+
+
+def explain_student(model: Pipeline, row, explainer: shap.TreeExplainer | None = None,
+                    band: str | None = None) -> Explanation:
     """Explain one student. `row` is a one-row DataFrame or a Series of model inputs."""
     X = row.to_frame().T if isinstance(row, pd.Series) else row
     if len(X) != 1:
         raise ValueError(f"explain_student takes one row, got {len(X)}")
     X = X[list(model.feature_names_in_)].infer_objects()
     base, contrib, scores = explain_rows(model, X, explainer)
-    values = X.iloc[0]
-    table = pd.DataFrame({
-        "value": values,
-        "contribution": contrib.iloc[0],
-        "group": [group_of(f) for f in values.index],
-        "phrase": [phrase(f, v) for f, v in values.items()],
-    })
-    table.index.name = "feature"
-    return Explanation(float(scores.iloc[0]), base, threshold, table)
+    return explanation_from_contributions(X.iloc[0], contrib.iloc[0], base, scores.iloc[0], band)
 
 
 def _join(items: list[str]) -> str:
@@ -136,11 +157,7 @@ def _join(items: list[str]) -> str:
 
 def build_sentence(expl: Explanation, n_reasons: int = 3, course_min: float = 0.01) -> str:
     """Plain-language summary. Background inputs never appear in it."""
-    if expl.threshold is None:
-        parts = [f"Risk score {expl.score:.2f}."]
-    else:
-        group = "At Risk" if expl.flagged else "On Track"
-        parts = [f"Risk score {expl.score:.2f} (provisional threshold {expl.threshold:.2f}): {group}."]
+    parts = [f"Risk band: {expl.band}."] if expl.band else []
     reasons = expl.reasons(n_reasons)
     parts.append(f"Raising it most: {_join(list(reasons['phrase']))}." if len(reasons)
                  else "No activity, assessment or study-load input raises it noticeably.")
@@ -149,10 +166,14 @@ def build_sentence(expl: Explanation, n_reasons: int = 3, course_min: float = 0.
         parts.append(f"Lowering it most: {_join(list(favour['phrase']))}.")
     course = expl.contributions[expl.contributions["group"] == "course"]
     course = course[course["contribution"].abs() >= course_min]
+    clauses = []
     for way, rows in [("raise", course[course["contribution"] > 0]), ("lower", course[course["contribution"] < 0])]:
         if len(rows):
-            verb = way + ("s" if len(rows) == 1 else "")
-            parts.append(f"Course-level patterns, not about the student: {_join(list(rows['phrase']))} "
-                         f"also {verb} it.")
-    parts.append("Background factors are shown separately and are not used as reasons.")
+            clauses.append(f"{_join(list(rows['phrase']))} {way + ('s' if len(rows) == 1 else '')} it")
+    if clauses:
+        parts.append(f"Course-level patterns, not about the student: {' and '.join(clauses)}.")
+    if len(expl.background()):
+        parts.append("Background factors are shown separately and are not used as reasons.")
+    else:
+        parts.append("Background characteristics are not model inputs.")
     return " ".join(parts)

@@ -1,0 +1,423 @@
+{
+  "dataset": "OULAD, released under CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/); Kuzilek J., Hlosta M., Zdrahal Z. Open University Learning Analytics dataset Sci. Data 4:170171 doi: 10.1038/sdata.2017.171 (2017).",
+  "cutoff_day": 30,
+  "min_cell": 20,
+  "validation_presentation": "2014J",
+  "department_risk": {
+    "rows": 26,
+    "suppressed_rows": 0,
+    "validation": [
+      {
+        "code_module": "AAA",
+        "students": 348,
+        "at_risk_rate": 0.273,
+        "share_low": 0.5661,
+        "share_medium": 0.3132,
+        "share_high": 0.1207
+      },
+      {
+        "code_module": "BBB",
+        "students": 1786,
+        "at_risk_rate": 0.355,
+        "share_low": 0.3707,
+        "share_medium": 0.5504,
+        "share_high": 0.0789
+      },
+      {
+        "code_module": "CCC",
+        "students": 2014,
+        "at_risk_rate": 0.496,
+        "share_low": 0.4116,
+        "share_medium": 0.3371,
+        "share_high": 0.2512
+      },
+      {
+        "code_module": "DDD",
+        "students": 1463,
+        "at_risk_rate": 0.4586,
+        "share_low": 0.378,
+        "share_medium": 0.3636,
+        "share_high": 0.2584
+      },
+      {
+        "code_module": "EEE",
+        "students": 1020,
+        "at_risk_rate": 0.3294,
+        "share_low": 0.499,
+        "share_medium": 0.3647,
+        "share_high": 0.1363
+      },
+      {
+        "code_module": "FFF",
+        "students": 1857,
+        "at_risk_rate": 0.3985,
+        "share_low": 0.4464,
+        "share_medium": 0.3802,
+        "share_high": 0.1734
+      },
+      {
+        "code_module": "GGG",
+        "students": 715,
+        "at_risk_rate": 0.379,
+        "share_low": 0.4867,
+        "share_medium": 0.435,
+        "share_high": 0.0783
+      },
+      {
+        "code_module": "All modules",
+        "students": 9203,
+        "at_risk_rate": 0.407,
+        "share_low": 0.4267,
+        "share_medium": 0.4012,
+        "share_high": 0.1721
+      }
+    ]
+  },
+  "retention_funnel": {
+    "rows": 156,
+    "suppressed_rows": 0,
+    "not_applicable": [
+      {
+        "code_module": "EEE",
+        "code_presentation": "2013J",
+        "stage": "Met the Day 30 submission check (submitted, or none was due)"
+      },
+      {
+        "code_module": "EEE",
+        "code_presentation": "2014B",
+        "stage": "Met the Day 30 submission check (submitted, or none was due)"
+      },
+      {
+        "code_module": "EEE",
+        "code_presentation": "2014J",
+        "stage": "Met the Day 30 submission check (submitted, or none was due)"
+      },
+      {
+        "code_module": "GGG",
+        "code_presentation": "2013J",
+        "stage": "Met the Day 30 submission check (submitted, or none was due)"
+      },
+      {
+        "code_module": "GGG",
+        "code_presentation": "2014B",
+        "stage": "Met the Day 30 submission check (submitted, or none was due)"
+      },
+      {
+        "code_module": "GGG",
+        "code_presentation": "2014J",
+        "stage": "Met the Day 30 submission check (submitted, or none was due)"
+      }
+    ],
+    "all_modules": [
+      {
+        "code_presentation": "2013B",
+        "stage_order": 1,
+        "stage": "Registered",
+        "students": 4684,
+        "share_of_registered": 1.0
+      },
+      {
+        "code_presentation": "2013B",
+        "stage_order": 2,
+        "stage": "Still registered after Day 30",
+        "students": 4111,
+        "share_of_registered": 0.8777
+      },
+      {
+        "code_presentation": "2013B",
+        "stage_order": 3,
+        "stage": "Active in the VLE by Day 30",
+        "students": 3984,
+        "share_of_registered": 0.8506
+      },
+      {
+        "code_presentation": "2013B",
+        "stage_order": 4,
+        "stage": "Met the Day 30 submission check (submitted, or none was due)",
+        "students": 3660,
+        "share_of_registered": 0.7814
+      },
+      {
+        "code_presentation": "2013B",
+        "stage_order": 5,
+        "stage": "Did not withdraw",
+        "students": 3048,
+        "share_of_registered": 0.6507
+      },
+      {
+        "code_presentation": "2013B",
+        "stage_order": 6,
+        "stage": "Passed",
+        "students": 2077,
+        "share_of_registered": 0.4434
+      },
+      {
+        "code_presentation": "2013J",
+        "stage_order": 1,
+        "stage": "Registered",
+        "students": 8845,
+        "share_of_registered": 1.0
+      },
+      {
+        "code_presentation": "2013J",
+        "stage_order": 2,
+        "stage": "Still registered after Day 30",
+        "students": 7655,
+        "share_of_registered": 0.8655
+      },
+      {
+        "code_presentation": "2013J",
+        "stage_order": 3,
+        "stage": "Active in the VLE by Day 30",
+        "students": 7372,
+        "share_of_registered": 0.8335
+      },
+      {
+        "code_presentation": "2013J",
+        "stage_order": 4,
+        "stage": "Met the Day 30 submission check (submitted, or none was due)",
+        "students": 6898,
+        "share_of_registered": 0.7799
+      },
+      {
+        "code_presentation": "2013J",
+        "stage_order": 5,
+        "stage": "Did not withdraw",
+        "students": 5925,
+        "share_of_registered": 0.6699
+      },
+      {
+        "code_presentation": "2013J",
+        "stage_order": 6,
+        "stage": "Passed",
+        "students": 4346,
+        "share_of_registered": 0.4914
+      },
+      {
+        "code_presentation": "2014B",
+        "stage_order": 1,
+        "stage": "Registered",
+        "students": 7804,
+        "share_of_registered": 1.0
+      },
+      {
+        "code_presentation": "2014B",
+        "stage_order": 2,
+        "stage": "Still registered after Day 30",
+        "students": 6497,
+        "share_of_registered": 0.8325
+      },
+      {
+        "code_presentation": "2014B",
+        "stage_order": 3,
+        "stage": "Active in the VLE by Day 30",
+        "students": 6272,
+        "share_of_registered": 0.8037
+      },
+      {
+        "code_presentation": "2014B",
+        "stage_order": 4,
+        "stage": "Met the Day 30 submission check (submitted, or none was due)",
+        "students": 5764,
+        "share_of_registered": 0.7386
+      },
+      {
+        "code_presentation": "2014B",
+        "stage_order": 5,
+        "stage": "Did not withdraw",
+        "students": 4711,
+        "share_of_registered": 0.6037
+      },
+      {
+        "code_presentation": "2014B",
+        "stage_order": 6,
+        "stage": "Passed",
+        "students": 3286,
+        "share_of_registered": 0.4211
+      },
+      {
+        "code_presentation": "2014J",
+        "stage_order": 1,
+        "stage": "Registered",
+        "students": 11260,
+        "share_of_registered": 1.0
+      },
+      {
+        "code_presentation": "2014J",
+        "stage_order": 2,
+        "stage": "Still registered after Day 30",
+        "students": 9203,
+        "share_of_registered": 0.8173
+      },
+      {
+        "code_presentation": "2014J",
+        "stage_order": 3,
+        "stage": "Active in the VLE by Day 30",
+        "students": 8982,
+        "share_of_registered": 0.7977
+      },
+      {
+        "code_presentation": "2014J",
+        "stage_order": 4,
+        "stage": "Met the Day 30 submission check (submitted, or none was due)",
+        "students": 8466,
+        "share_of_registered": 0.7519
+      },
+      {
+        "code_presentation": "2014J",
+        "stage_order": 5,
+        "stage": "Did not withdraw",
+        "students": 7015,
+        "share_of_registered": 0.623
+      },
+      {
+        "code_presentation": "2014J",
+        "stage_order": 6,
+        "stage": "Passed",
+        "students": 5351,
+        "share_of_registered": 0.4752
+      }
+    ]
+  },
+  "student_profiles": {
+    "features": [
+      "total_clicks",
+      "active_days",
+      "trailing_inactive_days",
+      "n_submitted",
+      "n_missed"
+    ],
+    "log_features": [
+      "total_clicks"
+    ],
+    "k_range": [
+      3,
+      4,
+      5
+    ],
+    "k": 4,
+    "selection": [
+      {
+        "k": 3,
+        "silhouette": 0.3354,
+        "smallest_share": 0.1368
+      },
+      {
+        "k": 4,
+        "silhouette": 0.3654,
+        "smallest_share": 0.0714
+      },
+      {
+        "k": 5,
+        "silhouette": 0.3457,
+        "smallest_share": 0.0711
+      }
+    ],
+    "profiles": [
+      {
+        "scope": "validation",
+        "profile": "Moderately engaged",
+        "students": 5008,
+        "share_of_scope": 0.5442,
+        "at_risk_rate": 0.4295,
+        "mean_total_clicks": 194.0996,
+        "mean_active_days": 10.2879,
+        "mean_trailing_inactive_days": 3.6769,
+        "mean_n_submitted": 0.8488,
+        "mean_n_missed": 0.0,
+        "description": "On average 194 clicks on 10.3 active days by Day 30, 3.7 days without activity just before it, 0.85 assessments submitted and 0.00 missed; 43% went on to fail or withdraw."
+      },
+      {
+        "scope": "validation",
+        "profile": "Missed early assessment",
+        "students": 472,
+        "share_of_scope": 0.0513,
+        "at_risk_rate": 0.8623,
+        "mean_total_clicks": 142.3814,
+        "mean_active_days": 7.7458,
+        "mean_trailing_inactive_days": 8.8686,
+        "mean_n_submitted": 0.0297,
+        "mean_n_missed": 1.0,
+        "description": "On average 142 clicks on 7.7 active days by Day 30, 8.9 days without activity just before it, 0.03 assessments submitted and 1.00 missed; 86% went on to fail or withdraw."
+      },
+      {
+        "scope": "validation",
+        "profile": "Highly engaged",
+        "students": 3186,
+        "share_of_scope": 0.3462,
+        "at_risk_rate": 0.2498,
+        "mean_total_clicks": 749.4583,
+        "mean_active_days": 27.0631,
+        "mean_trailing_inactive_days": 0.6777,
+        "mean_n_submitted": 1.2976,
+        "mean_n_missed": 0.0003,
+        "description": "On average 749 clicks on 27.1 active days by Day 30, 0.7 days without activity just before it, 1.30 assessments submitted and 0.00 missed; 25% went on to fail or withdraw."
+      },
+      {
+        "scope": "validation",
+        "profile": "Little VLE activity",
+        "students": 537,
+        "share_of_scope": 0.0584,
+        "at_risk_rate": 0.73,
+        "mean_total_clicks": 12.0745,
+        "mean_active_days": 1.2886,
+        "mean_trailing_inactive_days": 26.702,
+        "mean_n_submitted": 0.594,
+        "mean_n_missed": 0.2812,
+        "description": "On average 12 clicks on 1.3 active days by Day 30, 26.7 days without activity just before it, 0.59 assessments submitted and 0.28 missed; 73% went on to fail or withdraw."
+      },
+      {
+        "scope": "training",
+        "profile": "Moderately engaged",
+        "students": 8360,
+        "share_of_scope": 0.4942,
+        "at_risk_rate": 0.4569,
+        "mean_total_clicks": 179.7511,
+        "mean_active_days": 10.0709,
+        "mean_trailing_inactive_days": 3.7397,
+        "mean_n_submitted": 0.8672,
+        "mean_n_missed": 0.0,
+        "description": "On average 180 clicks on 10.1 active days by Day 30, 3.7 days without activity just before it, 0.87 assessments submitted and 0.00 missed; 46% went on to fail or withdraw."
+      },
+      {
+        "scope": "training",
+        "profile": "Missed early assessment",
+        "students": 1208,
+        "share_of_scope": 0.0714,
+        "at_risk_rate": 0.9065,
+        "mean_total_clicks": 123.9694,
+        "mean_active_days": 7.5712,
+        "mean_trailing_inactive_days": 8.9156,
+        "mean_n_submitted": 0.1159,
+        "mean_n_missed": 1.0944,
+        "description": "On average 124 clicks on 7.6 active days by Day 30, 8.9 days without activity just before it, 0.12 assessments submitted and 1.09 missed; 91% went on to fail or withdraw."
+      },
+      {
+        "scope": "training",
+        "profile": "Highly engaged",
+        "students": 5970,
+        "share_of_scope": 0.3529,
+        "at_risk_rate": 0.3,
+        "mean_total_clicks": 764.5293,
+        "mean_active_days": 27.1543,
+        "mean_trailing_inactive_days": 0.635,
+        "mean_n_submitted": 1.3616,
+        "mean_n_missed": 0.0008,
+        "description": "On average 765 clicks on 27.2 active days by Day 30, 0.6 days without activity just before it, 1.36 assessments submitted and 0.00 missed; 30% went on to fail or withdraw."
+      },
+      {
+        "scope": "training",
+        "profile": "Little VLE activity",
+        "students": 1377,
+        "share_of_scope": 0.0814,
+        "at_risk_rate": 0.7262,
+        "mean_total_clicks": 10.1235,
+        "mean_active_days": 1.1816,
+        "mean_trailing_inactive_days": 27.1249,
+        "mean_n_submitted": 0.3994,
+        "mean_n_missed": 0.3246,
+        "description": "On average 10 clicks on 1.2 active days by Day 30, 27.1 days without activity just before it, 0.40 assessments submitted and 0.32 missed; 73% went on to fail or withdraw."
+      }
+    ]
+  }
+}

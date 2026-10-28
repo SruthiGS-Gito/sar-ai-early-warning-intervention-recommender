@@ -20,8 +20,13 @@ venv/
 .env
 *.pem
 
-# Model artefacts and OS files
-/models/
+# Model artefacts and OS files. Binaries stay out (joblib can run code on load);
+# the final model's config and metrics JSON are tracked so results can be checked.
+/models/*
+!/models/final/
+/models/final/*
+!/models/final/config.json
+!/models/final/metrics.json
 *.joblib
 *.pkl
 .DS_Store

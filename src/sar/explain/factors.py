@@ -15,9 +15,9 @@ Groups
 
 import math
 
-from sar.config import CUTOFF_DAY
+from sar.config import CUTOFF_DAY, PROTECTED_FEATURES
 
-BACKGROUND = ("gender", "region", "highest_education", "imd_band", "age_band", "disability")
+BACKGROUND = PROTECTED_FEATURES
 COURSE = ("code_module", "n_assessments_due")
 STUDY = ("num_of_prev_attempts", "studied_credits")
 BEHAVIOUR = (

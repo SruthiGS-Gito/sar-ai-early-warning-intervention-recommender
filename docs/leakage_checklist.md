@@ -21,9 +21,11 @@ Each feature builder runs twice: on the data, and on the same data with every po
 - average score over the whole course
 - submission counts over the whole course
 
-## Models, thresholds and explanations (SCRUM-187)
+## Models, cutoffs and explanations (SCRUM-187, SCRUM-189)
 - Models are fitted on the training presentations only (`make_split`).
-- Thresholds come from out-of-fold scores on the training presentations (GroupKFold by presentation), never from 2014J.
+- The calibrator and every cutoff (`top_10`, `top_20`, `top_30`, `wide_net`) come from out-of-fold scores on the training presentations (GroupKFold by presentation), never from 2014J. The risk bands start at these cutoffs.
+- Capacity ranking flags the top share of the cohort being scored; it uses no labels.
 - SHAP uses tree_path_dependent mode, so no validation rows are passed to the explainer.
+- Precomputed SHAP values (`models/final/shap/`) are per student and are git-ignored.
 - Notebook outputs and saved examples show aggregates or synthetic students only.
 - The similar-student pool for recommendations (SCRUM-188) holds training presentations only and refuses 2014J; its imputer and scaler are fitted on the pool.

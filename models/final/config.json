@@ -1,0 +1,100 @@
+{
+  "model": "Random Forest, 24 features, isotonic calibration",
+  "cutoff_day": 30,
+  "excluded_protected_features": [
+    "gender",
+    "region",
+    "highest_education",
+    "imd_band",
+    "age_band",
+    "disability"
+  ],
+  "params": {
+    "class_weight": "balanced_subsample",
+    "max_depth": null,
+    "max_features": "sqrt",
+    "min_samples_leaf": 5,
+    "min_samples_split": 20,
+    "n_estimators": 234
+  },
+  "seed": 42,
+  "bootstrap_resamples": 1000,
+  "train_presentations": [
+    "2013B",
+    "2013J",
+    "2014B"
+  ],
+  "validation_presentation": [
+    "2014J"
+  ],
+  "created_utc": "2026-10-25T20:44:29+00:00",
+  "runtime_seconds": 53.0,
+  "data_file": "data/processed/day30_feature_matrix.csv",
+  "data_sha256": "e0c522c1593229d3c0de7871fe6c6df3dc3615499dc85b39b2b5abdc0aa7ffda",
+  "versions": {
+    "python": "3.12.10",
+    "scikit-learn": "1.9.1",
+    "pandas": "3.0.6",
+    "numpy": "2.5.3"
+  },
+  "features": [
+    "code_module",
+    "total_clicks",
+    "active_days",
+    "avg_clicks_per_active_day",
+    "clicks_last_7d",
+    "clicks_prev_7d",
+    "click_trend",
+    "first_active_day",
+    "n_submitted",
+    "mean_score",
+    "mean_delay_days",
+    "n_late",
+    "weighted_score",
+    "score_trend",
+    "n_assessments_due",
+    "n_missed",
+    "reg_lead_days",
+    "registered_late",
+    "registered_after_cutoff",
+    "reg_date_missing",
+    "max_consecutive_inactive_days",
+    "trailing_inactive_days",
+    "num_of_prev_attempts",
+    "studied_credits"
+  ],
+  "cutoffs": {
+    "wide_net": {
+      "score": 0.3333333333333333,
+      "rule": "out-of-fold recall >= 0.80",
+      "oof_flagged_share": 0.6005320721253325,
+      "oof_recall": 0.8017129509473138,
+      "oof_precision": 0.6081905886985627
+    },
+    "top_30": {
+      "score": 0.5794573643410853,
+      "rule": "top 30% of out-of-fold scores",
+      "oof_flagged_share": 0.31019804906887377,
+      "oof_recall": 0.5236179600311446,
+      "oof_precision": 0.769010863350486
+    },
+    "top_20": {
+      "score": 0.6495535714285714,
+      "rule": "top 20% of out-of-fold scores",
+      "oof_flagged_share": 0.2195093112621933,
+      "oof_recall": 0.4030625486633792,
+      "oof_precision": 0.836520333961756
+    },
+    "top_10": {
+      "score": 0.8662420382165605,
+      "rule": "top 10% of out-of-fold scores",
+      "oof_flagged_share": 0.107596807567248,
+      "oof_recall": 0.22138593303919024,
+      "oof_precision": 0.9373626373626374
+    }
+  },
+  "model_file": "model.joblib",
+  "model_sha256": "3fc8c2faa9cf6b35cb13c3a85a33126dd238ae81eecc3250984d8e1d59d739e8",
+  "calibrator_file": "calibrator.joblib",
+  "calibrator_sha256": "1a2478c217c3be215bbc54b54212a131edd78962f09ef893b3b3e2e9dd354fa2"
+}

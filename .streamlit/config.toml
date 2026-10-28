@@ -4,3 +4,19 @@ address = "localhost"
 
 [browser]
 gatherUsageStats = false
+
+# Hide developer items such as the Deploy button; viewers keep the basic menu.
+[client]
+toolbarMode = "minimal"
+
+# Dark theme: deep navy background, indigo accent, indigo borders and 14px corners on cards; the app CSS adds
+# the gradient, the card glow and the band pills.
+[theme]
+base = "dark"
+primaryColor = "#7c6cff"
+backgroundColor = "#0b1020"
+secondaryBackgroundColor = "#131a33"
+textColor = "#e8ecff"
+font = "sans-serif"
+borderColor = "#3b3a78"
+baseRadius = "14px"
