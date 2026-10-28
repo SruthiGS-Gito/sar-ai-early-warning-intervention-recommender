@@ -64,6 +64,33 @@ def test_support_sentence_names_the_fact_then_the_support():
     assert priority.similar_line(50, 1) == "Among 50 similar earlier students, 1 ended at risk."
 
 
+def test_verdict_sentence_names_the_main_drivers(explained):
+    part, features, base, contrib, raw = explained
+    for i in part.index[:10]:
+        expl = explanation_from_contributions(part.loc[i, features], contrib.loc[i], base, raw.loc[i], "High")
+        text = priority.verdict_sentence(expl)
+        raising, lowering = list(expl.reasons(2)["phrase"]), list(expl.in_favour(1)["phrase"])
+        assert all(p in text for p in raising + lowering) and text.endswith(".")
+        assert text.startswith("The risk score is raised most by" if raising else "No activity")
+        assert "module" not in text.replace("before the module started", "")
+
+
+def test_reason_counts_group_kinds_and_put_small_ones_in_other():
+    factors = pd.Series(["mean_score"] * 50 + ["weighted_score"] * 10 + ["n_missed"] * 30 + ["n_late"] * 3
+                        + [None] * 7)
+    counts = priority.reason_counts(factors)
+    assert list(counts.items()) == [("Assessment scores", 60), ("Assessments missed", 30),
+                                    (priority.NO_KIND, 7), (priority.OTHER, 3)]
+    assert set(priority.REASON_KINDS) <= set(ACTIONABLE_FEATURES)
+
+
+def test_short_reason_keeps_the_fact_on_one_line():
+    short = priority.short_reason
+    assert short("12 days without activity just before Day 30") == "12 days without activity before Day 30"
+    assert short("first active 3 days before the module started") == "First active 3 days before the start"
+    assert priority.short_reason(priority.NO_REASON) == priority.NO_KIND
+
+
 def test_selected_row_reads_a_single_row_selection():
     rows = [("AAA", 1), ("BBB", 2)]
     assert priority.selected_row(rows, {"selection": {"rows": [1], "columns": []}}) == ("BBB", 2)

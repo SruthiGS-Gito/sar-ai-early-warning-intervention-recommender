@@ -56,11 +56,15 @@ from sar.service.data import (  # noqa: E402
 )
 from sar.service.figures import band_figure, hidden_bands  # noqa: E402
 from sar.service.priority import (  # noqa: E402
+    OTHER,
     priority_details,
+    reason_counts,
     selected_row,
+    short_reason,
     similar_line,
     snapshot,
     support_sentence,
+    verdict_sentence,
 )
 from sar.service.views import (  # noqa: E402
     KEY,
@@ -83,8 +87,14 @@ from sar.tables.department import ALL_MODULES, BAND_RATES, BAND_SHARES  # noqa: 
 from sar.tables.profiles import PROFILE_FEATURES  # noqa: E402
 from sar.viz.plots import AT_RISK, NEUTRAL, ON_TRACK  # noqa: E402
 
-MODEL_NOTE = ("Validated on {val}. Students are ranked by calibrated risk and placed in Low, Medium or High risk "
-              "bands; the About tab explains the model, the bands and their limits.")
+# Smaller page title, larger page headline, tighter vertical spacing; colours come from the theme.
+STYLE = """<style>
+[data-testid="stMainBlockContainer"] {padding-top: 2.5rem; padding-bottom: 2rem;}
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {gap: 0.7rem;}
+[data-testid="stMainBlockContainer"] h1 {font-size: 1.4rem; padding: 0;}
+[data-testid="stMainBlockContainer"] h2 {font-size: 2rem; padding: 0.25rem 0 0;}
+[data-testid="stMainBlockContainer"] h4 {padding: 0 0 0.25rem;}
+</style>"""
 BAND_HELP = ("Risk bands come from the calibrated risk score: Low below the wide-net cutoff ({medium:.2f}), "
              "Medium from it, High from the top-20% cutoff ({high:.2f}). Both cutoffs were set on training data.")
 TRAINING_NOTE = ("This is a training presentation: the model learned from these students' outcomes, so their scores "
@@ -102,6 +112,7 @@ APP_NAME = "Student Academic Risk"
 APP_PURPOSE = "Day 30 early warning: who to contact first, why, and which support fits."
 PAGES = ["Priority list", "Student", "Cohort insights", "About"]
 BADGE_COLOURS = {"High": "red", "Medium": "gray", "Low": "blue"}
+CHIP_COLOURS = ["red", "orange", "violet", "blue", "green", "primary"]
 SNAPSHOT = {"total_clicks": "Total clicks", "active_days": "Active days",
             "trailing_inactive_days": f"Days inactive just before Day {CUTOFF_DAY}",
             "n_submitted": "Assessments submitted", "n_missed": "Assessments missed"}
@@ -209,9 +220,11 @@ def get_details(models_dir: str, presentation: str, keys: pd.DataFrame, _fitted,
         live = rows.loc[known, features]
         contrib = (explain_rows(_fitted["model"], live, get_explainer(models_dir, _fitted["model"]))[1]
                    if len(live) else pd.DataFrame(columns=features))
+    out = out.assign(main_factor=None, prepared=known)
     if known.any():
         details = priority_details(rows.loc[known, features], contrib.set_axis(rows.index[known]))
-        out.loc[known, ["main_reason", "suggested_support"]] = details[["main_reason", "suggested_support"]].values
+        cols = ["main_factor", "main_reason", "suggested_support"]
+        out.loc[known, cols] = details[cols].values
     return out
 
 
@@ -311,8 +324,8 @@ def sidebar(presentations: list[str], modules_of) -> View:
                     disabled=rule == WIDE_NET,
                     help="Share of the cohort the team can contact, highest risk first.")
     with sb.expander("Advanced"):
-        st.toggle("Show training presentations (in-sample scores)", key="show_training", disabled=not training)
-        st.caption(IN_SAMPLE_NOTE)
+        if st.toggle("Show training presentations (in-sample scores)", key="show_training", disabled=not training):
+            st.caption(IN_SAMPLE_NOTE)
         rule = st.radio("Flagging rule", [CAPACITY, WIDE_NET], key="flag_rule")
         scope = st.radio("Capacity applies to", [SCOPE_COHORT, SCOPE_MODULE], key="capacity_scope",
                          disabled=rule == WIDE_NET)
@@ -322,6 +335,7 @@ def sidebar(presentations: list[str], modules_of) -> View:
 
 
 st.set_page_config(page_title="Student Academic Risk: Day 30 early warning", layout="wide")
+st.markdown(STYLE, unsafe_allow_html=True)
 st.title("Student Academic Risk: Day 30 early warning")
 
 paths = resolve_paths()
@@ -343,7 +357,6 @@ if core_ok:
     edges = dict(risk_band_edges(cutoffs))
     ctl = sidebar(sorted(matrix["code_presentation"].unique()),
                    lambda p: sorted(matrix.loc[matrix["code_presentation"] == p, "code_module"].unique()))
-    st.sidebar.caption(MODEL_NOTE.format(val=", ".join(metrics["validation_presentation"])))
 else:
     ctl = None
     st.sidebar.title(APP_NAME)
@@ -404,12 +417,14 @@ def student_view(pres: str, module: str, sid: int) -> None:
     expl = get_explanation(models, pres, module, int(sid), band, fitted, final.config, row)
     rank, n_module = module_rank(scored, module, sid)
 
-    head = st.container(horizontal=True, vertical_alignment="center", gap="medium")
-    head.markdown(f"### Student {sid}")
-    head.markdown(f"Module **{module}**")
-    head.badge(f"{band} risk", color=BADGE_COLOURS[band],
-               help=BAND_HELP.format(**{k.lower(): v for k, v in edges.items()}))
-    head.markdown(f"ranked {rank:,} of {n_module:,} in module" + (" (in-sample)" if ctl.in_sample else ""))
+    with st.container(border=True):
+        head = st.container(horizontal=True, vertical_alignment="center", gap="medium")
+        head.markdown(f"### Student {sid}")
+        head.markdown(f"Module **{module}**")
+        head.badge(f"{band} risk", color=BADGE_COLOURS[band],
+                   help=BAND_HELP.format(**{k.lower(): v for k, v in edges.items()}))
+        head.markdown(f"ranked {rank:,} of {n_module:,} in module" + (" (in-sample)" if ctl.in_sample else ""))
+        st.markdown(verdict_sentence(expl))
 
     why, support, snap = st.columns(3, border=True)
     with why:
@@ -472,11 +487,8 @@ with student:
         pres = ctl.presentation
         in_pres = matrix[matrix["code_presentation"] == pres]
         bar = st.container(horizontal=True, vertical_alignment="bottom")
-        bar.button("Show an example High-risk student", key="example_high", on_click=show_example, args=("High",),
-                   help=f"A {TEST_PRESENTATION} student in the High band, drawn with a fixed seed from the chosen "
-                        "module when it has one.")
-        bar.button("Show an example Low-risk student", key="example_low", on_click=show_example, args=("Low",),
-                   help=f"A {TEST_PRESENTATION} student in the Low band, drawn the same way.")
+        bar.button("Show an example High-risk student", key="example_high", on_click=show_example, args=("High",))
+        bar.button("Show an example Low-risk student", key="example_low", on_click=show_example, args=("Low",))
         module = bar.selectbox("Module", sorted(in_pres["code_module"].unique()), key="lookup_module")
         ids = sorted(in_pres.loc[in_pres["code_module"] == module, "id_student"].unique())
         if st.session_state.get("lookup_student") not in ids:
@@ -485,6 +497,8 @@ with student:
             sid = bar.selectbox("Student ID", ids, placeholder="Choose a student", key="lookup_student")
         else:
             sid = bar.selectbox("Student ID", ids, index=None, placeholder="Choose a student", key="lookup_student")
+        st.caption(f"Examples are {TEST_PRESENTATION} students in that band, drawn with a fixed seed from the chosen "
+                   "module when it has one.")
         if st.session_state.get("lookup_example"):
             st.info(f"No {TEST_PRESENTATION} student is in the {st.session_state['lookup_example']} band.")
         if sid is None:
@@ -703,6 +717,10 @@ with cohort:
                                "groups hidden). Drag to rotate; hover for details.")
 
 
+def band_style(band: str) -> str:
+    return f"color: {BAND_COLOURS[band]}; font-weight: 600" if band in BAND_COLOURS else ""
+
+
 def rule_caption(c: View) -> str:
     where = "all modules" if c.module == ALL_MODULES else f"module {c.module}"
     if c.rule == WIDE_NET:
@@ -727,6 +745,17 @@ with priority:
         in_view = scored if ctl.module == ALL_MODULES else scored[scored["code_module"] == ctl.module]
         outcome = flag_outcome(in_view, in_view["flagged"])
         tag = " (in-sample)" if in_sample else ""
+        flagged = in_view[in_view["flagged"]].sort_values("rank")
+        details = (get_details(models, pres, flagged[KEY].reset_index(drop=True), fitted, final.config, matrix)
+                   if len(flagged) else None)
+        if details is None:
+            st.markdown("## No student in view is flagged")
+        else:
+            st.markdown(f"## Contact these {len(flagged):,} students first")
+            chips = st.container(horizontal=True, gap="small")
+            counts = reason_counts(details.loc[details["prepared"], "main_factor"])
+            for (kind, n), colour in zip(counts.items(), CHIP_COLOURS):
+                chips.badge(f"{kind}: {n:,}", color="gray" if kind == OTHER else colour)
         cards = st.columns(4)
         cards[0].metric("Students in view", f"{outcome.students:,}", border=True,
                         help="Students in the selected presentation and module.")
@@ -742,26 +771,25 @@ with priority:
                              f"are flagged; {outcome.missed:,} are not.")
         st.caption(rule_caption(ctl))
 
-        flagged = in_view[in_view["flagged"]].sort_values("rank")
         if flagged.empty:
             st.info("No student in view is flagged with this rule. Raise the capacity or choose another module.")
         else:
-            details = get_details(models, pres, flagged[KEY].reset_index(drop=True), fitted, final.config, matrix)
             listing = pd.DataFrame({
                 "Rank": range(1, len(flagged) + 1), "Student ID": flagged["id_student"].astype(str).to_numpy(),
                 "Module": flagged["code_module"].to_numpy(), "Risk band": flagged["band"].astype(str).to_numpy(),
-                "Main reason": details["main_reason"].to_numpy(),
+                "Main reason": [short_reason(r) if p else r for r, p in zip(details["main_reason"],
+                                                                            details["prepared"])],
                 "Suggested support": details["suggested_support"].to_numpy()})
             st.session_state["priority_rows"] = list(zip(flagged["code_module"], flagged["id_student"].astype(int)))
-            st.dataframe(listing, hide_index=True, key="priority_table", on_select=open_selected,
-                         selection_mode="single-row",
+            st.dataframe(listing.style.map(band_style, subset=["Risk band"]), hide_index=True, key="priority_table",
+                         on_select=open_selected, selection_mode="single-row",
                          column_config={"Rank": st.column_config.NumberColumn(width="small"),
                                         "Student ID": st.column_config.TextColumn(width="small"),
                                         "Module": st.column_config.TextColumn(width="small"),
                                         "Risk band": st.column_config.TextColumn(width="small"),
-                                        "Main reason": st.column_config.TextColumn(width="large"),
+                                        "Main reason": st.column_config.TextColumn(width="medium"),
                                         "Suggested support": st.column_config.TextColumn(width="medium")})
-            if (details["main_reason"] == OPEN_FOR_DETAILS).any():
+            if not details["prepared"].all():
                 st.caption(f"Reasons and suggestions are prepared for the top {MAX_LIVE_REASONS} students of this "
                            "presentation; open any other student to see theirs.")
             st.caption("Select a row to open the student. " + PSEUDONYM_NOTE)

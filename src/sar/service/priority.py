@@ -44,6 +44,62 @@ def similar_line(n: int, n_at_risk: int) -> str:
     return f"Among {n:,} similar earlier students, {n_at_risk:,} ended at risk."
 
 
+def _join(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def verdict_sentence(expl) -> str:
+    """One plain sentence on the main drivers, from the explanation's reasons and inputs in favour."""
+    raising, lowering = list(expl.reasons(2)["phrase"]), list(expl.in_favour(1)["phrase"])
+    if raising:
+        text = f"The risk score is raised most by {_join(raising)}"
+        return text + (f", and lowered most by {lowering[0]}." if lowering else ".")
+    text = "No activity, assessment or study-load input raises the risk score noticeably"
+    return text + (f"; it is lowered most by {lowering[0]}." if lowering else ".")
+
+
+# Kinds of main reason, for counting the flagged students: a main reason names one input, and the
+# inputs that describe the same kind of difficulty are counted together.
+REASON_KINDS = {
+    **dict.fromkeys(["mean_score", "weighted_score", "score_trend"], "Assessment scores"),
+    **dict.fromkeys(["n_missed", "n_submitted"], "Assessments missed"),
+    **dict.fromkeys(["max_consecutive_inactive_days", "trailing_inactive_days"], "Inactive spells"),
+    **dict.fromkeys(["total_clicks", "active_days", "avg_clicks_per_active_day", "clicks_last_7d", "clicks_prev_7d",
+                     "click_trend", "first_active_day"], "Site activity"),
+    **dict.fromkeys(["n_late", "mean_delay_days"], "Submission timing"),
+    **dict.fromkeys(["reg_lead_days", "registered_late", "registered_after_cutoff", "reg_date_missing"],
+                    "Registration timing"),
+    "studied_credits": "Study load",
+}
+NO_KIND = "No single input stands out"
+OTHER = "Other"
+
+
+def reason_counts(factors: pd.Series, min_share: float = 0.05) -> pd.Series:
+    """Students per kind of main reason, largest first, from main_factor values (missing: no input stands
+    out). Kinds under `min_share` of the students are counted together as "Other", shown last."""
+    kinds = factors.map(lambda f: REASON_KINDS.get(f, OTHER) if isinstance(f, str) else NO_KIND)
+    counts = kinds.value_counts()
+    small = (counts < min_share * len(factors)) | (counts.index == OTHER)
+    out = counts[~small]
+    if small.any():
+        out = pd.concat([out, pd.Series({OTHER: int(counts[small].sum())})])
+    return out
+
+
+# Shorter wording of the longer phrases, for one-line rows in the priority table.
+_SHORTER = [(" on the course site", ""), (" just before Day", " before Day"),
+            (" before the module started", " before the start"), (" in the last week before Day 30", " last week")]
+
+
+def short_reason(text: str) -> str:
+    if text == NO_REASON:
+        return NO_KIND
+    for long, short in _SHORTER:
+        text = text.replace(long, short)
+    return _capital(text)
+
+
 def priority_details(values: pd.DataFrame, contributions: pd.DataFrame) -> pd.DataFrame:
     """One row per row of `contributions` (same index): main_factor, main_reason and suggested_support.
     `values` holds the students' inputs with the same index."""

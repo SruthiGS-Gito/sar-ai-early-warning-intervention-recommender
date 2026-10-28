@@ -153,8 +153,15 @@ def test_priority_list_is_populated_on_first_load(synthetic_env, matrix, small_f
     model = small_final[0]["model"]
     contrib = explain_rows(model, rows[list(model.feature_names_in_)])[1]
     details = priority.priority_details(rows[list(model.feature_names_in_)], contrib)
-    assert list(listing["Main reason"]) == details["main_reason"].tolist()
+    assert list(listing["Main reason"]) == [priority.short_reason(r) for r in details["main_reason"]]
     assert list(listing["Suggested support"]) == details["suggested_support"].tolist()
+    assert list(listing["Risk band"]) == top["band"].astype(str).tolist()
+    text = _texts(tab)
+    assert f"## Contact these {k:,} students first" in text
+    chips = re.findall(r":(\w+)-badge\[(.+): ([\d,]+)\]", text)
+    counts = priority.reason_counts(details["main_factor"])
+    assert [(kind, int(n.replace(",", ""))) for _, kind, n in chips] == list(counts.items())
+    assert sum(counts) == k
     assert any(b.proto.label == "Download the list (CSV)" for b in at.get("download_button"))
     assert "pseudonymised identifiers" in _texts(tab)
 
@@ -166,6 +173,7 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
     tab = _tab(at, "Student")
     assert "Select a student in the priority list" in _texts(tab)
     assert {b.label for b in tab.button} == {"Show an example High-risk student", "Show an example Low-risk student"}
+    assert not any(b.proto.help for b in tab.button) and "drawn with a fixed seed" in _texts(tab)
     module, sid = _open_student(at)
     assert not at.exception
     tab = _tab(at, "Student")
@@ -182,6 +190,7 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
     assert 1 <= len(shown) <= 6 and not any(p.startswith("being on module") for p in shown)
     assert all(len(line) <= 30 for t in why["data"] for y in t["y"] for line in y.split("<br>"))
     assert "Red bars raise the risk score and blue bars lower it" in text
+    assert re.search(r"(The risk score is raised most by|No activity, assessment or study-load input raises)", text)
     assert "Suggested support" in text and text.count("descriptive, not evidence of effectiveness") == 1
     assert re.search(r"Among [\d,]+ similar earlier students, [\d,]+ ended at risk\.", text)
     assert "most similar students from earlier presentations" in text and "OULAD records no interventions" in text
@@ -347,7 +356,8 @@ def test_band_views_default_to_the_validation_presentation(tables_env):
     text = _texts(at)
     assert at.selectbox(key="presentation").options == ["2014J (validation)"]
     assert at.selectbox(key="presentation").value == "2014J" and not at.toggle(key="show_training").value
-    assert _texts(at.sidebar).count("Training presentations have in-sample scores") == 1
+    assert "Training presentations have in-sample scores" not in _texts(at.sidebar)
+    assert "This is a training presentation" not in _texts(at.sidebar) and "Validated on" not in _texts(at.sidebar)
     dept = [df.value for df in at.dataframe if "High band" in df.value.columns][0]
     assert "Presentation" not in dept.columns and "Scores" not in dept.columns
     assert "**Risk bands by module, 2014J** (validation (2014J) scores)" in text
@@ -357,6 +367,7 @@ def test_training_presentations_appear_only_after_opting_in(tables_env):
     at = AppTest.from_file(APP, default_timeout=120).run()
     at.toggle(key="show_training").set_value(True).run()
     assert not at.exception
+    assert _texts(at.sidebar).count("Training presentations have in-sample scores") == 1
     assert at.selectbox(key="presentation").options == [f"{p} (training, in-sample)" for p in
                                                         ["2013B", "2013J", "2014B"]]
     at.selectbox(key="presentation").set_value("2013J").run()
