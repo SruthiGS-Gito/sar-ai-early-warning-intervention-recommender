@@ -16,7 +16,7 @@ import pandas as pd
 
 from sar.explain.factors import phrase
 from sar.explain.shap_explain import MIN_CONTRIBUTION
-from sar.recommend.interventions import ACTIONABLE_FEATURES, FEATURE_TO_INTERVENTIONS, label
+from sar.recommend.interventions import ACTIONABLE_FEATURES, FEATURE_TO_INTERVENTIONS, INTERVENTIONS, label
 
 NO_REASON = "No activity, assessment or study-load input raises the score noticeably"
 NO_SUPPORT = "None matched"
@@ -147,3 +147,10 @@ def snapshot(matrix: pd.DataFrame, presentation: str, module: str, student: int,
                         "median": [float(part[f].median()) for f in features]}, index=list(features))
     out["difference"] = out["value"] - out["median"]
     return out
+
+
+def support_counts(supports: pd.Series) -> pd.Series:
+    """Flagged students per support type (by label, in the order of INTERVENTIONS, zeros kept) from the
+    suggested_support column; students with no matched type are counted under NO_SUPPORT, last."""
+    order = [label(name) for name in INTERVENTIONS] + [NO_SUPPORT]
+    return supports.value_counts().reindex(order, fill_value=0).astype(int)

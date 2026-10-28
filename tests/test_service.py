@@ -300,3 +300,26 @@ def test_example_student_is_fixed_by_the_seed_and_prefers_the_module(matrix, sma
             assert module == "BBB"
         assert views.example_student(scored, band, "BBB", 42) == (module, sid)
     assert views.example_student(scored.assign(band="Low"), "High", None, 42) is None
+
+
+def test_at_risk_by_presentation_matches_observed_outcomes(matrix):
+    table = views.at_risk_by_presentation(matrix)
+    assert list(table["code_presentation"]) == sorted(matrix["code_presentation"].unique())
+    for _, row in table.iterrows():
+        part = matrix[matrix["code_presentation"] == row["code_presentation"]]
+        assert row["students"] == len(part) and row["at_risk_rate"] == pytest.approx(part["at_risk"].mean())
+    one = views.at_risk_by_presentation(matrix, "AAA")
+    assert one["students"].sum() == (matrix["code_module"] == "AAA").sum()
+
+
+def test_at_risk_by_activity_uses_the_day_buckets_and_hides_small_ones(matrix):
+    table = views.at_risk_by_activity(matrix, "2014J")
+    assert list(table["day_band"].astype(str)) == ["0", "1-5", "6-10", "11-15", "16-20", "21+"]
+    part = matrix[matrix["code_presentation"] == "2014J"]
+    assert table["students"].sum() == len(part)
+    zero = part[part["active_days"] == 0]
+    assert table.loc[0, "students"] == len(zero)
+    small = table["students"] < views.MIN_CELL
+    assert table.loc[small, "at_risk_rate"].isna().all() and table.loc[small, "suppressed"].all()
+    if not small.iloc[0]:
+        assert table.loc[0, "at_risk_rate"] == pytest.approx(zero["at_risk"].mean())

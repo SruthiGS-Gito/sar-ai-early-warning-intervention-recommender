@@ -108,3 +108,12 @@ def test_snapshot_compares_with_the_module_median(matrix):
     assert snap.loc["active_days", "median"] == pytest.approx(part["active_days"].median())
     assert snap.loc["active_days", "difference"] == pytest.approx(row["active_days"] - part["active_days"].median())
     assert isinstance(snap, pd.DataFrame)
+
+
+def test_support_counts_keep_every_type_in_order():
+    from sar.recommend.interventions import INTERVENTIONS, label
+
+    counts = priority.support_counts(pd.Series(["Tutoring", "Weekly check-ins", "Tutoring", priority.NO_SUPPORT]))
+    assert list(counts.index) == [label(n) for n in INTERVENTIONS] + [priority.NO_SUPPORT]
+    assert counts["Tutoring"] == 2 and counts["Weekly check-ins"] == 1 and counts["Mentoring"] == 0
+    assert counts.sum() == 4

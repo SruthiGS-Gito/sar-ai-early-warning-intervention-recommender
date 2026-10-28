@@ -42,7 +42,7 @@ from sar.explain.shap_explain import (  # noqa: E402
     explanation_from_contributions,
     make_explainer,
 )
-from sar.recommend.interventions import ACTIONABLE_FEATURES  # noqa: E402
+from sar.recommend.interventions import ACTIONABLE_FEATURES, INTERVENTIONS  # noqa: E402
 from sar.recommend.neighbours import NeighbourPool  # noqa: E402
 from sar.recommend.recommender import NOTE, recommend  # noqa: E402
 from sar.service.data import (  # noqa: E402
@@ -58,18 +58,22 @@ from sar.service.data import (  # noqa: E402
 )
 from sar.service.figures import band_figure, hidden_bands  # noqa: E402
 from sar.service.priority import (  # noqa: E402
+    NO_SUPPORT,
     priority_details,
     reason_counts,
     selected_row,
     short_reason,
     similar_line,
     snapshot,
+    support_counts,
     support_sentence,
     verdict_sentence,
 )
 from sar.service.views import (  # noqa: E402
     KEY,
     MIN_CELL,
+    at_risk_by_activity,
+    at_risk_by_presentation,
     band_evidence,
     batch_summary,
     calibration_bins,
@@ -109,6 +113,8 @@ STYLE = """<style>
 .pill-info {color: #b9b2ff; background: rgba(124,108,255,0.16);}
 [class*="st-key-card-kpi"] [data-testid="stMetricValue"] {font-size: 2rem;}
 [class*="st-key-card-"] [data-testid="stMetric"] {padding: 0;}
+.bandbar {display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 0.3rem;}
+.bandbar span {display: block; height: 100%;}
 .page-subtitle {color: #9aa3c7; margin-top: -0.6rem;}
 .brand {font-size: 1.15rem; font-weight: 700; color: #e8ecff;}
 .st-key-nav [role="radiogroup"] {gap: 0.2rem;}
@@ -141,7 +147,7 @@ EVIDENCE_NOTE = ("Observed at-risk rate inside each band, and its lift: the band
 SCOPE_COHORT, SCOPE_MODULE = "the whole cohort", "each module separately"
 APP_NAME = "Student Academic Risk"
 APP_PURPOSE = "Day 30 early warning: who to contact first, why, and which support fits."
-PAGES = ["Overview", "Student", "Modules", "About"]
+PAGES = ["Overview", "Student", "Modules", "Support", "About"]
 PAGE_ICONS = {"Overview": ":material/dashboard:", "Student": ":material/person:", "Modules": ":material/grid_view:",
               "Support": ":material/volunteer_activism:", "About": ":material/info:"}
 PAGE_STATE = ["lookup_module", "lookup_student", "funnel_module", "show_3d"]
@@ -159,6 +165,9 @@ ALL_BANDS = "All bands"
 STUDENT_SECTIONS = ["Overview", "Day 30 indicators", "Why this score", "Support"]
 RING_HEIGHT = 170
 RING_HELP = "Among validation students with a similar score, about this share ended Fail or Withdrawn."
+SUPPORT_COLOURS = ["#7c6cff", "#4f8cff", "#35d0ba", "#ffb454", "#ff8fa3"]
+SUPPORT_NOTE = ("Suggestions are rule-based: they match the model's risk drivers to support types. OULAD has no "
+                "intervention records, so no outcome or effectiveness figures are shown.")
 DISCLAIMER = "This is a model prediction. It supports, and does not replace, professional judgment."
 WRAP = 30  # characters per line of a factor label
 MAX_LIVE_REASONS = 50
@@ -616,27 +625,62 @@ def page_student() -> None:
             student_view(pres, module, sid)
 
 
-def cohort_cards(pres: str, module: str, dept: pd.DataFrame | None) -> None:
-    """Cohort at-risk rate and the shares in the High and Low bands, for the sidebar selection."""
-    where = ALL_MODULES if module == ALL_MODULES else module
-    rate = high = low = None
-    if core_ok:
-        scored = get_scores(processed, models, pres, fitted, matrix)
-        part = scored if where == ALL_MODULES else scored[scored["code_module"] == where]
-        if len(part) >= MIN_CELL:
-            rate, high, low = part["at_risk"].mean(), (part["band"] == "High").mean(), (part["band"] == "Low").mean()
-    elif dept is not None:
-        row = dept[(dept["code_presentation"] == pres) & (dept["code_module"] == where)]
-        if len(row) and not bool(row["suppressed"].iloc[0]):
-            rate, high, low = row[["at_risk_rate", "share_high", "share_low"]].iloc[0]
-    cards = st.columns(3)
-    label = "all modules" if where == ALL_MODULES else f"module {where}"
-    cards[0].metric("Cohort at-risk rate", DASH if rate is None else f"{rate:.0%}", border=True,
-                    help=f"Share of {pres} students in {label} whose final outcome was Fail or Withdrawn.")
-    cards[1].metric("Share in the High band", DASH if high is None else f"{high:.0%}", border=True,
-                    help="Students at or above the top-20% cutoff set on training data.")
-    cards[2].metric("Share in the Low band", DASH if low is None else f"{low:.0%}", border=True,
-                    help="Students below the wide-net cutoff set on training data.")
+def band_bar(row) -> str:
+    """A thin stacked bar of the Low, Medium and High shares, as HTML; the shares are in its hover text."""
+    parts = "".join(f'<span style="width:{row[f"share_{b.lower()}"]:.1%};background:{BAND_COLOURS[b]}"></span>'
+                    for b in BAND_ORDER)
+    title = ", ".join(f"{b} {row[f'share_{b.lower()}']:.0%}" for b in BAND_ORDER)
+    return f'<div class="bandbar" title="{title}">{parts}</div>'
+
+
+def module_cards(dept_part: pd.DataFrame) -> None:
+    """One card per module: students, observed at-risk rate and a thin stacked bar of the band shares."""
+    rows = dept_part[dept_part["code_module"] != ALL_MODULES].sort_values("code_module")
+    per_row = 4
+    for start in range(0, len(rows), per_row):
+        cols = st.columns(per_row)
+        for col, (_, row) in zip(cols, rows.iloc[start:start + per_row].iterrows()):
+            with col.container(border=True, key=f"card-module-{row['code_module']}"):
+                hidden = bool(row["suppressed"])
+                st.metric(f"Module {row['code_module']}", SMALL if hidden else f"{row['at_risk_rate']:.0%}",
+                          help="Observed at-risk rate: share of students whose final outcome was Fail or Withdrawn.")
+                if hidden:
+                    st.caption(f"Fewer than {MIN_CELL} students, so no figures are shown.")
+                else:
+                    st.caption(f"{int(row['students']):,} students. Observed at-risk rate.")
+                    st.markdown(band_bar(row), unsafe_allow_html=True)
+
+
+def intake_chart(table: pd.DataFrame, scope: str):
+    shown = table[~table["suppressed"]]
+    fig = go.Figure(go.Bar(x=shown["code_presentation"].tolist(), y=shown["at_risk_rate"].tolist(),
+                           marker_color=[ACCENT if p == TEST_PRESENTATION else ACCENT_2
+                                         for p in shown["code_presentation"]],
+                           text=[f"{r:.0%}<br>n = {n:,}" for r, n in zip(shown["at_risk_rate"], shown["students"])],
+                           textposition="outside"))
+    fig.update_layout(title=f"Observed at-risk rate by intake, {scope}", yaxis_tickformat=".0%", yaxis_range=[0, 1.1],
+                      yaxis_title="Observed at-risk rate", xaxis_title="Presentation", margin={"t": 50},
+                      height=CHART_HEIGHT)
+    return fig
+
+
+def activity_chart(table: pd.DataFrame, pres: str, scope: str):
+    shown = table[~table["suppressed"]]
+    fig = go.Figure(go.Bar(x=shown["day_band"].astype(str).tolist(), y=shown["at_risk_rate"].tolist(),
+                           marker_color=ACCENT_2,
+                           text=[f"{r:.0%}<br>n = {n:,}" for r, n in zip(shown["at_risk_rate"], shown["students"])],
+                           textposition="outside"))
+    fig.update_layout(title=f"Observed at-risk rate by days active by Day {CUTOFF_DAY}, {pres}, {scope}",
+                      yaxis_tickformat=".0%", yaxis_range=[0, 1.1], yaxis_title="Observed at-risk rate",
+                      xaxis_title=f"Days active by Day {CUTOFF_DAY}", xaxis={"type": "category"}, margin={"t": 50},
+                      height=CHART_HEIGHT)
+    return fig
+
+
+def gradient(n: int, start=(79, 140, 255), end=(124, 108, 255)) -> list[str]:
+    """`n` colours from the blue accent to the violet accent."""
+    steps = [i / max(n - 1, 1) for i in range(n)]
+    return [f"rgb({', '.join(str(round(a + (b - a) * t)) for a, b in zip(start, end))})" for t in steps]
 
 
 def band_chart(part: pd.DataFrame, pres: str):
@@ -669,8 +713,8 @@ def funnel_view(fun: pd.DataFrame, pres: str, module: str):
                                                  part["stage"] + " (not applicable)"))
     shown = shown_rows(part)
     fig = go.Figure(go.Funnel(y=shown["stage"].tolist(), x=shown["students"].astype(float).tolist(),
-                              marker_color=ACCENT_2, texttemplate="%{value:,.0f} (%{percentInitial:.0%})"))
-    fig.update_layout(height=CHART_HEIGHT, margin={"t": 50}, separators=".,",
+                              marker_color=gradient(len(shown)), texttemplate="%{value:,.0f} (%{percentInitial:.0%})"))
+    fig.update_layout(height=CHART_HEIGHT, margin={"t": 50}, separators=".,", showlegend=False,
                       title=f"Students at each stage (retrospective), {module}, {pres}")
     notes = ["Retrospective: the last two stages use final outcomes, which are not model inputs."]
     carried = in_pres[~in_pres["applicable"].astype(bool)]
@@ -721,20 +765,56 @@ def page_modules() -> None:
     pres = ctl.presentation if ctl else TEST_PRESENTATION
     module = ctl.module if ctl else ALL_MODULES
     in_sample = is_training_presentation(pres)
-    st.markdown("### Risk bands by module", help=DEPT_NOTE.format(n=MIN_CELL))
+    one = None if module == ALL_MODULES else module
+    scope = "all modules" if one is None else f"module {one}"
     if in_sample:
         st.warning(DEPT_TRAINING_NOTE)
     dept_status = get_table("department_risk", processed)
     dept = dept_status.table if dept_status.ok else None
-    cohort_cards(pres, module, dept)
+    st.markdown("### Risk bands by module", help=DEPT_NOTE.format(n=MIN_CELL))
     dept_part = None
     if dept is None:
         status_card(dept_status)
     else:
         dept_part = dept[dept["code_presentation"] == pres]
-        show_chart(band_chart(dept_part, pres))
-        if dept_part["suppressed"].astype(bool).any():
-            st.caption(f"Modules with fewer than {MIN_CELL} students are not shown.")
+        module_cards(dept_part)
+
+    left, right = st.columns(2)
+    if dept_part is not None:
+        with left.container(border=True, key="card-band-chart"):
+            show_chart(band_chart(dept_part, pres))
+            if dept_part["suppressed"].astype(bool).any():
+                st.caption(f"Modules with fewer than {MIN_CELL} students are not shown.")
+    if matrix_l.ok:
+        with right.container(border=True, key="card-intake"):
+            show_chart(intake_chart(at_risk_by_presentation(matrix_l.value, one), scope))
+            st.caption(f"Observed outcomes of each intake. {TEST_PRESENTATION} is the validation presentation. "
+                       f"Intakes with fewer than {MIN_CELL} students are not shown.")
+
+    left, right = st.columns(2)
+    if matrix_l.ok:
+        with left.container(border=True, key="card-activity"):
+            show_chart(activity_chart(at_risk_by_activity(matrix_l.value, pres, one), pres, scope))
+            st.caption(f"Groups with fewer than {MIN_CELL} students are not shown.")
+    fun_status = get_table("retention_funnel", processed)
+    funnel_table = funnel_module = None
+    with right:
+        st.markdown("### Retention funnel", help=FUNNEL_NOTE)
+        if not fun_status.ok:
+            status_card(fun_status)
+        else:
+            with st.container(border=True, key="card-funnel"):
+                fun = fun_status.table
+                options = [ALL_MODULES,
+                           *sorted(set(fun.loc[fun["code_presentation"] == pres, "code_module"]) - {ALL_MODULES})]
+                default = options.index(module) if module in options else 0
+                if "funnel_module" in st.session_state:
+                    funnel_module = st.selectbox("Module", options, key="funnel_module")
+                else:
+                    funnel_module = st.selectbox("Module", options, index=default, key="funnel_module")
+                fig, note, funnel_table = funnel_view(fun, pres, funnel_module)
+                show_chart(fig)
+                st.caption(note)
 
     prof_status = get_table("student_profiles", processed)
     st.markdown("### Student profiles", help=PROFILE_NOTE.format(val=TEST_PRESENTATION))
@@ -742,36 +822,20 @@ def page_modules() -> None:
     if not prof_status.ok:
         status_card(prof_status)
     else:
-        prof = prof_status.table
-        scope = "training" if in_sample and "training" in set(prof["scope"]) else "validation"
-        scope_label = "training presentations" if scope == "training" else TEST_PRESENTATION
-        prof_part = prof[prof["scope"] == scope].sort_values("at_risk_rate", ascending=False, na_position="last")
-        shown = shown_rows(prof_part)
-        show_chart(profile_chart(shown, scope_label))
-        if scope == "training":
-            st.caption("Shown for the training presentations together, the rows the clusters were fitted on.")
+        with st.container(border=True, key="card-profiles"):
+            prof = prof_status.table
+            kind = "training" if in_sample and "training" in set(prof["scope"]) else "validation"
+            scope_label = "training presentations" if kind == "training" else TEST_PRESENTATION
+            prof_part = prof[prof["scope"] == kind].sort_values("at_risk_rate", ascending=False, na_position="last")
+            shown = shown_rows(prof_part)
+            show_chart(profile_chart(shown, scope_label))
+            if kind == "training":
+                st.caption("Shown for the training presentations together, the rows the clusters were fitted on.")
         with st.expander("What each profile means"):
             for _, row in shown.iterrows():
                 st.markdown(f"**{row['profile']}**: {row['description']}")
 
-    fun_status = get_table("retention_funnel", processed)
-    st.markdown("### Retention funnel", help=FUNNEL_NOTE)
-    funnel_table = None
-    if not fun_status.ok:
-        status_card(fun_status)
-    else:
-        fun = fun_status.table
-        options = [ALL_MODULES, *sorted(set(fun.loc[fun["code_presentation"] == pres, "code_module"]) - {ALL_MODULES})]
-        default = options.index(module) if module in options else 0
-        if "funnel_module" in st.session_state:
-            funnel_module = st.selectbox("Module", options, key="funnel_module")
-        else:
-            funnel_module = st.selectbox("Module", options, index=default, key="funnel_module")
-        fig, note, funnel_table = funnel_view(fun, pres, funnel_module)
-        show_chart(fig)
-        st.caption(note)
-
-    with st.expander("View data tables"):
+    with st.expander("Data tables"):
         if dept_part is not None:
             st.markdown(f"**Risk bands by module, {pres}** ({score_source(pres)} scores)")
             bands = {s: s.removeprefix("share_").capitalize() for s in BAND_SHARES}
@@ -995,6 +1059,63 @@ def page_overview() -> None:
                        "share of the module's flagged students who are at risk.")
 
 
+def support_bar_chart(counts: pd.Series):
+    shown = counts[counts > 0].sort_values()
+    total = int(counts.sum())
+    fig = go.Figure(go.Bar(x=shown.tolist(), y=shown.index.tolist(), orientation="h", marker_color=ACCENT,
+                           text=[f"{n:,} ({n / total:.0%})" for n in shown], textposition="outside"))
+    fig.update_layout(title="Primary suggestion among flagged students", xaxis_title="Flagged students",
+                      xaxis_range=[0, float(shown.max()) * 1.3 if len(shown) else 1], yaxis={"automargin": True},
+                      height=CHART_HEIGHT, margin={"t": 50, "l": 10, "r": 10})
+    return fig
+
+
+def support_module_chart(table: pd.DataFrame):
+    fig = go.Figure([go.Bar(name=t, x=table.index.tolist(), y=table[t].tolist(), marker_color=c)
+                     for t, c in zip(table.columns, SUPPORT_COLOURS) if table[t].sum()])
+    fig.update_layout(barmode="stack", title="Primary suggestion by module", xaxis_title="Module",
+                      yaxis_title="Flagged students", legend={"orientation": "h", "y": -0.25},
+                      height=CHART_HEIGHT, margin={"t": 50})
+    return fig
+
+
+def page_support() -> None:
+    if not core_ok:
+        core_message()
+        return
+    fs = flag_state(ctl)
+    if fs.details is None:
+        st.info("No student in view is flagged with this rule. Raise the capacity or choose another module.")
+        return
+    if not fs.details["prepared"].all():
+        st.info(f"Available for the validation presentation ({TEST_PRESENTATION}).")
+        return
+    counts = support_counts(fs.details["suggested_support"])
+    flagged = int(counts.sum())
+    st.caption(f"{rule_caption(ctl)} {flagged:,} flagged students, counted by the support type suggested first "
+               "for each.")
+    names = list(INTERVENTIONS)
+    for start in range(0, len(names), 3):
+        cols = st.columns(3)
+        for col, name in zip(cols, names[start:start + 3]):
+            title, definition = INTERVENTIONS[name]
+            with col.container(border=True, key=f"card-support-{name}"):
+                st.metric(title, f"{counts[title]:,}", help="Flagged students whose primary suggestion is this type.")
+                st.caption(definition)
+    if counts[NO_SUPPORT]:
+        st.caption(f"{counts[NO_SUPPORT]:,} flagged students have no input that raises the score noticeably, so no "
+                   "support type is matched.")
+    left, right = st.columns(2)
+    with left.container(border=True, key="card-support-counts"):
+        show_chart(support_bar_chart(counts.drop(NO_SUPPORT)))
+    by_module = pd.crosstab(fs.flagged["code_module"].to_numpy(), fs.details["suggested_support"].to_numpy())
+    by_module = by_module.reindex(columns=[INTERVENTIONS[n][0] for n in names], fill_value=0)
+    with right.container(border=True, key="card-support-modules"):
+        show_chart(support_module_chart(by_module))
+    with st.container(border=True, key="card-support-note"):
+        st.markdown(f":material/info: {SUPPORT_NOTE}")
+
+
 def band_reading(pres: str) -> pd.DataFrame | None:
     """Observed at-risk rate and lift per band for a presentation: from the generated department table when it
     is loaded, otherwise computed from the model's scores. None when neither is available."""
@@ -1018,102 +1139,114 @@ def page_about() -> None:
         val = ", ".join(metrics["validation_presentation"])
         train_pres = ", ".join(sorted(set(matrix["code_presentation"]) - {val}))
         v = metrics["final"]["validation"]
-        st.markdown("### Model")
-        st.write(f"A Random Forest scores each student from {len(fitted['features'])} inputs known by Day "
-                 f"{CUTOFF_DAY}: the module, VLE activity, assessment submissions and scores so far, registration "
-                 "timing, study load and previous attempts. Protected characteristics (gender, region, highest "
-                 "education, deprivation band, age band, disability) are not inputs. Isotonic calibration turns the "
-                 f"forest's score into a calibrated risk score. Trained on {train_pres}; on {val}: ROC-AUC "
-                 f"{v['roc_auc']:.3f}, PR-AUC {v['pr_auc']:.3f}, at-risk rate {v['prevalence']:.0%} among "
-                 f"{v['n']:,} students.")
-        st.write("OULAD organises teaching into modules (courses), not departments; this application uses modules "
-                 "wherever a department view is shown.")
+        with st.container(border=True, key="card-about-1"):
+            st.markdown("### Model")
+            st.write(f"A Random Forest scores each student from {len(fitted['features'])} inputs known by Day "
+                     f"{CUTOFF_DAY}: the module, VLE activity, assessment submissions and scores so far, registration "
+                     "timing, study load and previous attempts. Protected characteristics (gender, region, highest "
+                     "education, deprivation band, age band, disability) are not inputs. Isotonic calibration "
+                     f"turns the forest's score into a calibrated risk score. Trained on {train_pres}; on {val}: "
+                     f"ROC-AUC {v['roc_auc']:.3f}, PR-AUC {v['pr_auc']:.3f}, at-risk rate {v['prevalence']:.0%} among "
+                     f"{v['n']:,} students.")
+            st.write("OULAD organises teaching into modules (courses), not departments; this application uses modules "
+                     "wherever a department view is shown.")
 
-        st.markdown("### Design and validation")
-        overlap = overlap_report(matrix, val)
-        st.markdown(
-            f"- Prediction day: each student is scored from what is known by Day {CUTOFF_DAY} of the module; "
-            f"students who left on or before Day {CUTOFF_DAY} are not scored.\n"
-            f"- Temporal split by presentation: the model is trained on earlier presentations ({train_pres}) and "
-            f"checked on the latest one ({val}), as it would be used on a new intake.\n"
-            f"- Students who appear in both: {overlap['students in both']:,} students enrolled in a training "
-            f"presentation and in {val}; their {overlap['train rows removed from overlap']:,} training rows are "
-            "removed, so no student is seen in both.\n"
-            "- Cutoffs: the wide-net and top-20% cutoffs, and so the band edges, are chosen on out-of-fold scores "
-            "of the training presentations, never on the validation presentation.\n"
-            f"- {val} is a validation presentation, not an untouched test set: it was used to compare model "
-            "configurations, so its figures may be slightly optimistic.")
+        with st.container(border=True, key="card-about-2"):
+            st.markdown("### Design and validation")
+            overlap = overlap_report(matrix, val)
+            st.markdown(
+                f"- Prediction day: each student is scored from what is known by Day {CUTOFF_DAY} of the module; "
+                f"students who left on or before Day {CUTOFF_DAY} are not scored.\n"
+                f"- Temporal split by presentation: the model is trained on earlier presentations ({train_pres}) and "
+                f"checked on the latest one ({val}), as it would be used on a new intake.\n"
+                f"- Students who appear in both: {overlap['students in both']:,} students enrolled in a training "
+                f"presentation and in {val}; their {overlap['train rows removed from overlap']:,} training rows are "
+                "removed, so no student is seen in both.\n"
+                "- Cutoffs: the wide-net and top-20% cutoffs, and so the band edges, are chosen on out-of-fold scores "
+                "of the training presentations, never on the validation presentation.\n"
+                f"- {val} is a validation presentation, not an untouched test set: it was used to compare model "
+                "configurations, so its figures may be slightly optimistic.")
 
-        st.markdown("### Risk bands")
-        st.write("Each band starts at a calibrated-score cutoff chosen on training data.")
-        show_table(pd.DataFrame({
-            "Band": ["Low", "Medium", "High"],
-            "Calibrated score": [f"below {edges['Medium']:.2f}", f"{edges['Medium']:.2f} to below {edges['High']:.2f}",
-                                 f"{edges['High']:.2f} and above"],
-            "How the cutoff was set": [
-                "Everyone below the Medium cutoff.",
-                "In the training data, 8 in 10 students who went on to fail or withdraw scored at least this.",
-                "In the training data, the highest-scoring 1 in 5 students scored at least this."]}), {})
+        with st.container(border=True, key="card-about-3"):
+            st.markdown("### Risk bands")
+            st.write("Each band starts at a calibrated-score cutoff chosen on training data.")
+            show_table(pd.DataFrame({
+                "Band": ["Low", "Medium", "High"],
+                "Calibrated score": [f"below {edges['Medium']:.2f}",
+                                     f"{edges['Medium']:.2f} to below {edges['High']:.2f}",
+                                     f"{edges['High']:.2f} and above"],
+                "How the cutoff was set": [
+                    "Everyone below the Medium cutoff.",
+                    "In the training data, 8 in 10 students who went on to fail or withdraw scored at least this.",
+                    "In the training data, the highest-scoring 1 in 5 students scored at least this."]}), {})
 
-        st.markdown("### How to read the bands")
-        reading = band_reading(val)
-        if reading is not None:
-            show_table(reading.rename(columns={"rate": f"Observed at-risk rate, {val}", "lift": "Lift"}),
-                       {f"Observed at-risk rate, {val}": "{:.0%}", "Lift": "{:.2f}"}, missing=SMALL)
-            st.caption(f"Lift is the band's at-risk rate divided by the at-risk rate of all {val} students.")
-        st.write("The Medium band's at-risk rate is close to the cohort average, so a Medium band is not a warning "
-                 "on its own.")
+        with st.container(border=True, key="card-about-4"):
+            st.markdown("### How to read the bands")
+            reading = band_reading(val)
+            if reading is not None:
+                show_table(reading.rename(columns={"rate": f"Observed at-risk rate, {val}", "lift": "Lift"}),
+                           {f"Observed at-risk rate, {val}": "{:.0%}", "Lift": "{:.2f}"}, missing=SMALL)
+                st.caption(f"Lift is the band's at-risk rate divided by the at-risk rate of all {val} students.")
+            st.write("The Medium band's at-risk rate is close to the cohort average, so a Medium band is not a warning "
+                     "on its own.")
 
-        st.markdown("### Reading the cohort insights")
-        st.markdown(f"- Risk bands by module: {DEPT_NOTE.format(n=MIN_CELL)}\n"
-                    f"- Band evidence: {EVIDENCE_NOTE.format(n=MIN_CELL)}\n"
-                    f"- Student profiles: {PROFILE_NOTE.format(val=TEST_PRESENTATION)}\n"
-                    f"- Retention funnel: {FUNNEL_NOTE}")
+        with st.container(border=True, key="card-about-5"):
+            st.markdown("### Reading the Modules page")
+            st.markdown(f"- Risk bands by module: {DEPT_NOTE.format(n=MIN_CELL)}\n"
+                        f"- Band evidence: {EVIDENCE_NOTE.format(n=MIN_CELL)}\n"
+                        f"- Student profiles: {PROFILE_NOTE.format(val=TEST_PRESENTATION)}\n"
+                        f"- Retention funnel: {FUNNEL_NOTE}")
 
-        st.markdown("### Capacity flagging")
-        st.write("The priority list ranks the chosen cohort by calibrated risk (ties broken by the forest's raw score) "
-                 "and flags the highest-risk share set on the slider, to match a team with a fixed number of "
-                 "contacts; the share can apply to the whole cohort or to each module. Precision, recall and the "
-                 "at-risk students caught or missed are computed from that cohort's observed outcomes. The wide-net "
-                 "rule instead flags everyone above a fixed cutoff, so the share it flags varies between intakes.")
+        with st.container(border=True, key="card-about-6"):
+            st.markdown("### Capacity flagging")
+            st.write("The Overview list ranks the chosen cohort by calibrated risk (ties broken by the forest's raw "
+                     "score) and flags the highest-risk share set on the slider, to match a team with a fixed number "
+                     "of contacts; the share can apply to the whole cohort or to each module. Precision, recall and "
+                     "the at-risk students caught or missed are computed from that cohort's observed outcomes. The "
+                     "wide-net rule instead flags everyone above a fixed cutoff, so the share it flags varies between "
+                     "intakes.")
 
-        st.markdown("### Limitations")
-        groups = metrics["final"].get("fairness_validation", {}).get("groups", {})
-        gaps = []
-        if "gender" in groups:
-            g = groups["gender"]
-            gaps.append(f"women {g['F']['recall']:.0%} and men {g['M']['recall']:.0%}")
-        if "age_band" in groups:
-            g = groups["age_band"]
-            gaps.append(f"ages 35-55 {g['35-55']['recall']:.0%} and under 35 {g['0-35']['recall']:.0%}")
-        no_due = matrix.groupby("code_module")["n_assessments_due"].max()
-        no_due = ", ".join(no_due[no_due == 0].index) or "none"
-        val_scored = get_scores(processed, models, val, fitted, matrix)
-        val_scored = val_scored.assign(flagged=flag_capacity(val_scored, 0.2).flagged)
-        recall = batch_summary(val_scored, outcomes=True).drop(index=ALL_MODULES)["Recall"].sort_values()
-        lowest = "; ".join(f"{m} {r:.0%}" for m, r in recall.head(2).items())
-        st.markdown(
-            "- Support suggestions are rule-based: they match the model's risk drivers to support types and have not "
-            "been tested as interventions.\n"
-            "- OULAD records no interventions or their outcomes, so the effect of contacting a student is unknown.\n"
-            f"- In some modules no assessment is due by Day {CUTOFF_DAY} ({no_due}), so the model has no early "
-            "scores there.\n"
-            f"- With 20% capacity across the whole cohort on {val}, the lowest module recall is {lowest} (share of "
-            "the module's at-risk students who are flagged); capacity can apply to each module instead "
-            "(sidebar, Advanced).\n"
-            + (f"- Recall differs between groups at the top-20% cutoff on {val}: {'; '.join(gaps)}.\n" if gaps else "")
-            + f"- Validation figures come from one presentation ({val}); training presentations are in-sample.")
+        with st.container(border=True, key="card-about-7"):
+            st.markdown("### Limitations")
+            groups = metrics["final"].get("fairness_validation", {}).get("groups", {})
+            gaps = []
+            if "gender" in groups:
+                g = groups["gender"]
+                gaps.append(f"women {g['F']['recall']:.0%} and men {g['M']['recall']:.0%}")
+            if "age_band" in groups:
+                g = groups["age_band"]
+                gaps.append(f"ages 35-55 {g['35-55']['recall']:.0%} and under 35 {g['0-35']['recall']:.0%}")
+            no_due = matrix.groupby("code_module")["n_assessments_due"].max()
+            no_due = ", ".join(no_due[no_due == 0].index) or "none"
+            val_scored = get_scores(processed, models, val, fitted, matrix)
+            val_scored = val_scored.assign(flagged=flag_capacity(val_scored, 0.2).flagged)
+            recall = batch_summary(val_scored, outcomes=True).drop(index=ALL_MODULES)["Recall"].sort_values()
+            lowest = "; ".join(f"{m} {r:.0%}" for m, r in recall.head(2).items())
+            st.markdown(
+                "- Support suggestions are rule-based: they match the model's risk drivers to support types and have "
+                "not been tested as interventions.\n"
+                "- OULAD records no interventions or their outcomes, so the effect of contacting a student is "
+                "unknown.\n"
+                f"- In some modules no assessment is due by Day {CUTOFF_DAY} ({no_due}), so the model has no early "
+                "scores there.\n"
+                f"- With 20% capacity across the whole cohort on {val}, the lowest module recall is {lowest} (share of "
+                "the module's at-risk students who are flagged); capacity can apply to each module instead "
+                "(sidebar, Advanced).\n"
+                + (f"- Recall differs between groups at the top-20% cutoff on {val}: {'; '.join(gaps)}.\n"
+                   if gaps else "")
+                + f"- Validation figures come from one presentation ({val}); training presentations are in-sample.")
     else:
         st.info("The model description appears here once the Day 30 data and the model are available.")
 
-    st.markdown("### Data source")
-    st.write("Open University Learning Analytics Dataset (OULAD). As stated on the dataset page "
-             "(https://research.stem.open.ac.uk/ouanalyse/open-dataset-more/):")
-    st.markdown('- License: "This dataset is released under CC-BY 4.0 license." '
-                "(https://creativecommons.org/licenses/by/4.0/)\n"
-                '- Citing the dataset: "When citing the dataset please use the following reference:" Kuzilek J., '
-                "Hlosta M., Zdrahal Z. Open University Learning Analytics dataset Sci. Data 4:170171 doi: "
-                "10.1038/sdata.2017.171 (2017).")
+    with st.container(border=True, key="card-about-8"):
+        st.markdown("### Data source")
+        st.write("Open University Learning Analytics Dataset (OULAD). As stated on the dataset page "
+                 "(https://research.stem.open.ac.uk/ouanalyse/open-dataset-more/):")
+        st.markdown('- License: "This dataset is released under CC-BY 4.0 license." '
+                    "(https://creativecommons.org/licenses/by/4.0/)\n"
+                    '- Citing the dataset: "When citing the dataset please use the following reference:" Kuzilek J., '
+                    "Hlosta M., Zdrahal Z. Open University Learning Analytics dataset Sci. Data 4:170171 doi: "
+                    "10.1038/sdata.2017.171 (2017).")
 
     with st.expander("Data details"):
         built = model_l.value.config.get("created_utc", "unknown") if model_l.ok else "not built"
@@ -1129,7 +1262,8 @@ def page_about() -> None:
                 "python scripts/build_team_tables.py   # department, funnel and profile tables", language="bash")
 
 
-PAGE_VIEWS = {"Overview": page_overview, "Student": page_student, "Modules": page_modules, "About": page_about}
+PAGE_VIEWS = {"Overview": page_overview, "Student": page_student, "Modules": page_modules, "Support": page_support,
+              "About": page_about}
 page = st.session_state.get("nav_page", PAGES[0])
 page_header(page, ctl.presentation if ctl else None)
 PAGE_VIEWS[page]()

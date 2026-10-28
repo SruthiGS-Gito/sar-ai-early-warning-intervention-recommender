@@ -229,3 +229,27 @@ def risk_bands(scored: pd.DataFrame, matrix: pd.DataFrame) -> pd.DataFrame:
 
 def is_training_presentation(presentation: str) -> bool:
     return presentation != TEST_PRESENTATION
+
+
+def _rates(groups) -> pd.DataFrame:
+    """Students and observed at-risk rate per group; the rate is NaN for groups under MIN_CELL students."""
+    out = groups["at_risk"].agg(students="size", at_risk_rate="mean").reset_index()
+    out.loc[out["students"] < MIN_CELL, "at_risk_rate"] = np.nan
+    out["suppressed"] = out["students"] < MIN_CELL
+    return out
+
+
+def at_risk_by_presentation(matrix: pd.DataFrame, module: str | None = None) -> pd.DataFrame:
+    """Observed at-risk rate per presentation (intake), in presentation order, for one module or all."""
+    part = matrix if module is None else matrix[matrix["code_module"] == module]
+    return _rates(part.groupby("code_presentation")).sort_values("code_presentation").reset_index(drop=True)
+
+
+def at_risk_by_activity(matrix: pd.DataFrame, presentation: str, module: str | None = None) -> pd.DataFrame:
+    """Observed at-risk rate by days active by Day 30, in the DAY_BANDS buckets (0, 1-5, ..., 21+), for one
+    presentation and one module or all. Every bucket is listed, with zero students where none fall in it."""
+    part = matrix[matrix["code_presentation"] == presentation]
+    if module is not None:
+        part = part[part["code_module"] == module]
+    days = pd.cut(part["active_days"], DAY_BANDS[0], labels=DAY_BANDS[1]).rename("day_band")
+    return _rates(part.groupby(days, observed=False))

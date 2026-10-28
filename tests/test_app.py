@@ -39,7 +39,7 @@ def synthetic_env(empty_env, matrix, small_final):
 
 
 MAIN_PAGES = ["Overview", "Student", "Modules"]
-PAGES = [*MAIN_PAGES, "About"]
+PAGES = [*MAIN_PAGES, "Support", "About"]
 DEVELOPER_TEXT = re.compile(r"SCRUM-|ticket \d|scripts/|\.py\b|docs/|models/|metrics\.json|last updated|\d+ rows")
 
 
@@ -64,7 +64,7 @@ def _visit(at, pages) -> str:
 
 def _main_tab_texts(at) -> str:
     """Text of the sidebar and of every page except About."""
-    return _texts(at.sidebar) + "\n" + _visit(at, MAIN_PAGES)
+    return _texts(at.sidebar) + "\n" + _visit(at, [*MAIN_PAGES, "Support"])
 
 
 def _open_training(at, presentation: str = "2013J"):
@@ -315,11 +315,16 @@ def test_cohort_insights_shows_cards_charts_and_collapsed_tables(tables_env):
     assert "not available yet" not in text.lower()
     for heading in ["### Risk bands by module", "### Student profiles", "### Retention funnel"]:
         assert heading in text
-    cards = [m for m in tab.metric]
-    assert [m.label for m in cards] == ["Cohort at-risk rate", "Share in the High band", "Share in the Low band"]
-    assert all(m.proto.show_border and m.help for m in cards)
+    dept = pd.read_csv(tables_env[0] / "data" / "processed" / "department_risk.csv")
+    dept = dept[(dept["code_presentation"] == "2014J") & (dept["code_module"] != "All modules")]
+    cards = {m.label: m.value for m in tab.metric}
+    assert list(cards) == [f"Module {m}" for m in sorted(dept["code_module"])]
+    for _, row in dept.iterrows():
+        expected = "n < 20" if row["suppressed"] else f"{row['at_risk_rate']:.0%}"
+        assert cards[f"Module {row['code_module']}"] == expected
+    assert text.count('class="bandbar"') == int((~dept["suppressed"].astype(bool)).sum())
     assert not list(_outside_expanders(tab, "dataframe"))                   # tables only in collapsed sections
-    assert [e.label for e in tab.expander] == ["What each profile means", "View data tables", "Model reliability",
+    assert [e.label for e in tab.expander] == ["What each profile means", "Data tables", "Model reliability",
                                                "Optional 3D view"]
     assert "Retrospective: the last two stages use final outcomes, which are not model inputs." in text
     validation = prof[prof["scope"] == "validation"]
@@ -622,7 +627,8 @@ def test_without_precomputed_explanations_only_the_top_rows_get_reasons(syntheti
 def test_navigation_renders_only_the_selected_page(synthetic_env):
     at = AppTest.from_file(APP, default_timeout=120).run()
     markers = {"Overview": "Flagged for contact", "Student": "Show an example High-risk student",
-               "Modules": "### Risk bands by module", "About": "### Model"}
+               "Modules": "### Risk bands by module", "Support": "OULAD has no intervention records",
+               "About": "### Model"}
     for page, marker in markers.items():
         tab = _tab(at, page)
         text = _texts(tab) + " ".join([b.label for b in tab.button] + [m.label for m in tab.metric])
@@ -674,3 +680,76 @@ def test_training_student_shows_the_band_without_a_ring(synthetic_env, matrix):
     text = _texts(at.main)
     assert "(in-sample)" in text and "Training presentations have in-sample scores" in text
     assert "Estimated risk" not in text and not [s for s in _chart_specs(at) if s["data"][0].get("hole") == 0.78]
+
+
+def test_modules_page_charts_come_from_observed_outcomes(tables_env, matrix):
+    from sar.service import views
+
+    at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Modules")
+    assert not at.exception
+    specs = {s["layout"]["title"]["text"]: s for s in _chart_specs(at) if s["layout"].get("title")}
+    intake = specs["Observed at-risk rate by intake, all modules"]["data"][0]
+    expected = views.at_risk_by_presentation(matrix)
+    assert intake["x"] == list(expected["code_presentation"])
+    assert intake["y"] == pytest.approx(list(expected["at_risk_rate"]))
+    activity = specs["Observed at-risk rate by days active by Day 30, 2014J, all modules"]["data"][0]
+    buckets = views.at_risk_by_activity(matrix, "2014J")
+    shown = buckets[~buckets["suppressed"]]
+    assert activity["x"] == list(shown["day_band"].astype(str))
+    assert activity["text"] == [f"{r:.0%}<br>n = {n:,}" for r, n in zip(shown["at_risk_rate"], shown["students"])]
+    funnel = [s for t, s in specs.items() if t.startswith("Students at each stage")][0]["data"][0]
+    assert len(set(funnel["marker"]["color"])) > 1                         # blue-to-violet gradient
+
+
+def test_support_page_counts_the_primary_suggestion_of_each_flagged_student(synthetic_env, matrix, small_final):
+    from sar.recommend.interventions import INTERVENTIONS
+    from sar.service import priority, views
+
+    models = synthetic_env / "models"
+    loaded = load_final_model(models).value
+    part = matrix[matrix["code_presentation"] == "2014J"]
+    base, contrib, raw = explain_rows(loaded.fitted["model"], part[loaded.fitted["features"]])
+    save_shap_cache(models, "2014J", part[["code_module", "code_presentation", "id_student"]], contrib, raw, base,
+                    loaded.config)
+    at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Support")
+    assert not at.exception
+    supports = _listing(_go(at, "Overview")).value["Suggested support"]
+    counts = priority.support_counts(supports)
+    _go(at, "Support")
+    cards = {m.label: m.value for m in at.main.metric}
+    assert list(cards) == [title for title, _ in INTERVENTIONS.values()]
+    assert all(cards[t] == f"{counts[t]:,}" for t in cards)
+    text = _texts(at.main)
+    assert "rule-based" in text and "OULAD has no intervention records" in text
+    assert all(definition in text for _, definition in INTERVENTIONS.values())
+    by_module = [s for s in _chart_specs(at) if s["layout"]["title"]["text"] == "Primary suggestion by module"][0]
+    assert sum(sum(t["y"]) for t in by_module["data"]) == int(counts.drop(priority.NO_SUPPORT).sum())
+    assert views.MIN_CELL == 20
+
+
+def test_support_page_needs_prepared_suggestions(synthetic_env):
+    at = _open_training(AppTest.from_file(APP, default_timeout=120).run(), "2013J")
+    at.slider(key="capacity").set_value(50).run()                           # more flagged than are prepared live
+    _go(at, "Support")
+    assert not at.exception and "Available for the validation presentation (2014J)." in _texts(at.main)
+
+
+FORBIDDEN = re.compile(r"EduGuard|last month|Intervention Outcomes|\bGPA\b|[Aa]ttendance|Assign Tutor|Mark as Assigned|"
+                       r"Contact Student|Schedule Meeting|[Ff]ollow-up date|\u2014")
+FORBIDDEN_COLUMNS = {"Name", "Student name", "Status", "Progress", "Follow-up", "Outcome", "GPA", "Attendance"}
+
+
+def test_no_page_shows_data_the_system_does_not_have(tables_env, matrix):
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    _open_student(at)
+    seen = [_texts(at.sidebar), _texts(at.main)]
+    for page in PAGES:
+        tab = _tab(at, page)
+        assert not at.exception
+        seen.append(_texts(tab) + " ".join([b.label for b in tab.button] + [m.label for m in tab.metric]))
+        for frame in tab.dataframe:
+            assert not FORBIDDEN_COLUMNS & set(frame.value.columns), frame.value.columns
+    text = "\n".join(seen)
+    assert not FORBIDDEN.search(text), FORBIDDEN.search(text)
+    assert {b.label for b in at.get("button")} <= {"Show an example High-risk student",
+                                                    "Show an example Low-risk student"}
