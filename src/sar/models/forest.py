@@ -124,7 +124,7 @@ def file_sha256(path: Path) -> str:
 
 def save_model(model: Pipeline, metadata: dict, models_dir: Path | None = None,
                metadata_path: Path | None = None) -> tuple[Path, Path]:
-    """Write the model (git-ignored folder) and its metadata JSON (committed, no student data)."""
+    """Write the model and its metadata JSON (no student data); by default both go to the git-ignored models folder."""
     models_dir = Path(models_dir or MODELS_DIR)
     models_dir.mkdir(parents=True, exist_ok=True)
     model_path = models_dir / f"{MODEL_NAME}.joblib"

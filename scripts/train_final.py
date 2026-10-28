@@ -1,7 +1,8 @@
 """Train the final Day 30 model: 24-feature Random Forest, isotonic calibration, out-of-fold cutoffs.
 
 Run from the repo root, after scripts/run_baseline.py:  python scripts/train_final.py
-Writes models/final/model.joblib, calibrator.joblib, config.json and metrics.json (git-ignored).
+Writes models/final/model.joblib and calibrator.joblib (git-ignored binaries), and config.json and
+metrics.json (tracked, so the committed results can be checked).
 2014J is the validation presentation: it is scored for the metrics and used for nothing else.
 """
 
