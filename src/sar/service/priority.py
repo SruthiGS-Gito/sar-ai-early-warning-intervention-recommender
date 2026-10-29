@@ -243,10 +243,32 @@ def _kinds(features) -> list[str]:
     return out
 
 
+def outscoring_type(intervention: str) -> tuple[str, list[str], bool]:
+    """The support type that scores at least as high as `intervention` on every input they share, by the
+    weights in FEATURE_TO_INTERVENTIONS, the shared inputs, and whether its weight is higher on at least one
+    of them. Of several such types, the one with the largest weight margin over the shared inputs, then the
+    most shared inputs, then the first in INTERVENTIONS."""
+    best = None
+    for other in INTERVENTIONS:
+        shared = [f for f, w in FEATURE_TO_INTERVENTIONS.items() if intervention in w and other in w]
+        if other == intervention or not shared:
+            continue
+        margins = [FEATURE_TO_INTERVENTIONS[f][other] - FEATURE_TO_INTERVENTIONS[f][intervention] for f in shared]
+        if min(margins) < -1e-12:
+            continue
+        rank = (sum(margins), len(shared))
+        if best is None or rank > best[0]:
+            best = (rank, other, shared, max(margins) > 1e-12)
+    if best is None:
+        raise ValueError(f"No support type scores at least as high as {intervention!r} on the inputs they share")
+    return best[1:]
+
+
 def never_first(intervention: str) -> str:
-    """Why a support type can be suggested by the rules yet be nobody's primary suggestion: the inputs it is
-    matched from, and the types that share those inputs, from FEATURE_TO_INTERVENTIONS."""
-    own = [f for f, w in FEATURE_TO_INTERVENTIONS.items() if intervention in w]
-    others = sorted({label(o) for f in own for o in FEATURE_TO_INTERVENTIONS[f] if o != intervention})
-    return (f"Matched only from {_join(_kinds(own))}, which also point to {_join(others)}. For every flagged "
-            "student in view another type has the larger total, so it is never listed first.")
+    """One sentence on why a support type is nobody's primary suggestion: the inputs that trigger it also
+    point to a type that scores higher on them (outscoring_type), both named from the rule mapping."""
+    other, shared, higher = outscoring_type(intervention)
+    kinds = _kinds(shared)
+    return (f"No flagged student has {label(intervention)} suggested first: {_join(kinds)}, which "
+            f"{'triggers' if len(kinds) == 1 else 'trigger'} it, also {'points' if len(kinds) == 1 else 'point'} "
+            f"to {label(other)}, which {'scores higher' if higher else 'never scores lower'}.")

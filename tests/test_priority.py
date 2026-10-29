@@ -174,12 +174,18 @@ def test_support_counts_keep_every_type_in_order():
     assert counts.sum() == 4
 
 
-def test_never_first_names_the_mapped_inputs_and_the_sharing_types():
+def test_never_first_is_one_short_sentence_naming_a_type_that_scores_at_least_as_high():
     from sar.recommend.interventions import FEATURE_TO_INTERVENTIONS, INTERVENTIONS, label
 
     for name in INTERVENTIONS:
         text = priority.never_first(name)
-        own = [f for f, w in FEATURE_TO_INTERVENTIONS.items() if name in w]
-        sharing = {label(o) for f in own for o in FEATURE_TO_INTERVENTIONS[f] if o != name}
-        assert all(t in text for t in sharing) and label(name) not in text.split(", which")[1]
-    assert "study load and registration timing" in priority.never_first("financial_aid_referral")
+        other, shared, higher = priority.outscoring_type(name)
+        assert other != name and shared
+        assert all(FEATURE_TO_INTERVENTIONS[f][other] >= FEATURE_TO_INTERVENTIONS[f][name] for f in shared)
+        assert text.startswith(f"No flagged student has {label(name)} suggested first: ")
+        assert f"to {label(other)}, which " in text and ("scores higher" in text) == higher
+        assert len(text.split()) <= 25 and text.count(".") == 1 and text.endswith(".")
+        assert not any(w in text for w in ("mapped", "total", "in view"))
+    fa = priority.never_first("financial_aid_referral")
+    assert "study load and registration timing" in fa and "to Mentoring" in fa
+    assert "to Weekly check-ins, which scores higher" in priority.never_first("mentoring")

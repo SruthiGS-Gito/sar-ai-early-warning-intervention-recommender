@@ -833,6 +833,9 @@ def test_support_page_counts_the_primary_suggestion_of_each_flagged_student(synt
     specs = {s["layout"]["title"]["text"]: s for s in _chart_specs(at)}
     by_module = specs["Primary suggestion by module"]
     assert sum(sum(t["y"]) for t in by_module["data"]) == int(counts.drop(priority.NO_SUPPORT).sum())
+    for spec in specs.values():                                   # legend beside the plot, never under the title
+        legend = spec["layout"].get("legend", {})
+        assert legend.get("orientation") == "v" and legend.get("x", 0) > 1 and legend.get("xanchor") == "left"
     colours = {t["marker"]["color"] for t in by_module["data"]}
     colours |= set(specs["Primary suggestion among flagged students"]["data"][0]["marker"]["color"])
     assert not colours & {"#ff5d73", "#ffb454", "#35d0ba"}                     # never a band colour

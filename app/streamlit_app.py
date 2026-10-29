@@ -145,13 +145,16 @@ STYLE = """<style>
 .st-key-nav [role="radiogroup"] label:hover {background: rgba(124,108,255,0.12);}
 </style>"""
 CHART_HEIGHT = 380
+# Legends sit in a column to the right of the plot, top-aligned: Plotly widens the right margin to fit them, so a
+# legend never runs into the title, however narrow the card.
+LEGEND = {"orientation": "v", "x": 1.02, "xanchor": "left", "y": 1, "yanchor": "top"}
 pio.templates["sar_dark"] = go.layout.Template(layout=go.Layout(
     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=CHART_HEIGHT,
     font={"color": TEXT, "family": "Inter, Segoe UI, sans-serif", "size": 13}, title={"font": {"size": 15}},
     colorway=[ACCENT, ACCENT_2, BAND_COLOURS["Low"], BAND_COLOURS["Medium"], BAND_COLOURS["High"]],
     xaxis={"gridcolor": GRID, "zerolinecolor": GRID, "linecolor": GRID},
     yaxis={"gridcolor": GRID, "zerolinecolor": GRID, "linecolor": GRID},
-    legend={"bgcolor": "rgba(0,0,0,0)", "orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
+    legend={"bgcolor": "rgba(0,0,0,0)", **LEGEND},
     margin={"t": 80}, hoverlabel={"bgcolor": "#131a33", "font": {"color": TEXT}}))
 pio.templates.default = "plotly_dark+sar_dark"
 BAND_HELP = ("Risk bands come from the calibrated risk score: Low below the wide-net cutoff ({medium:.2f}), "
@@ -439,9 +442,8 @@ def band_pill(band: str) -> str:
 
 def show_chart(fig) -> None:
     """Every chart uses the app's dark Plotly template rather than Streamlit's chart theme, with transparent
-    backgrounds so the card shows through, and the legend in a row above the plot."""
-    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0})
+    backgrounds so the card shows through, and the legend in a column to the right of the plot (LEGEND)."""
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", legend=LEGEND)
     st.plotly_chart(fig, width="stretch", theme=None)
 
 
