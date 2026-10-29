@@ -33,6 +33,8 @@ WEIGHTLESS = "submitted work carries no weight yet"
 # a spell without activity.
 LOW_BAND_DRIVERS = ("n_missed", "max_consecutive_inactive_days", "trailing_inactive_days")
 NO_LOW_SUGGESTION = "No specific support suggested at Day 30."
+# suggested_support values that name no support type
+NOT_A_TYPE = (NO_SUPPORT, NO_LOW_SUGGESTION)
 # What each support type offers, written to follow the Day 30 fact that matched it.
 SUPPORT_ACTIONS = {
     "tutoring": "a tutor can go over the module content and the next assessment with them.",
@@ -184,9 +186,12 @@ def short_reason(text: str) -> str:
     return _capital(text)
 
 
-def priority_details(values: pd.DataFrame, contributions: pd.DataFrame) -> pd.DataFrame:
-    """One row per row of `contributions` (same index): main_factor, main_reason and suggested_support.
-    `values` holds the students' inputs with the same index."""
+def priority_details(values: pd.DataFrame, contributions: pd.DataFrame, bands=None) -> pd.DataFrame:
+    """One row per row of `contributions` (same index): main_factor, main_reason, suggested_support and
+    support_reason, the primary suggestion's own reason as the Student page words it. `values` holds the
+    students' inputs with the same index; `bands`, when given, their risk bands, so that a Low-band student
+    whose first suggestion is not from a missed assessment or a spell without activity gets NO_LOW_SUGGESTION,
+    as on the Student page (primary_for)."""
     contributions = contributions.copy()
     if {"weighted_score", "mean_score"} <= set(values.columns) and "weighted_score" in contributions.columns:
         weightless = (values["weighted_score"].isna() & values["mean_score"].notna()).reindex(contributions.index)
@@ -209,14 +214,26 @@ def priority_details(values: pd.DataFrame, contributions: pd.DataFrame) -> pd.Da
         cf = contributions[f].to_numpy(dtype=float)
         rows = np.flatnonzero(cf >= MIN_CONTRIBUTION)
         for name, w in weights.items():
-            parts.append(pd.DataFrame({"row": rows, "intervention": name, "score": w * cf[rows]}))
-    support = [NO_SUPPORT] * len(contributions)
+            parts.append(pd.DataFrame({"row": rows, "intervention": name, "feature": f, "score": w * cf[rows]}))
+    support, support_reason = [NO_SUPPORT] * len(contributions), [""] * len(contributions)
+    low = (np.zeros(len(contributions), bool) if bands is None
+           else (pd.Series(bands).astype(str).to_numpy() == "Low"))
     if parts:
-        totals = pd.concat(parts, ignore_index=True).groupby(["row", "intervention"])["score"].sum()
+        scores = pd.concat(parts, ignore_index=True)
+        totals = scores.groupby(["row", "intervention"])["score"].sum()
+        # each type's first driver: the input with the largest weight x contribution, as in recommend()
+        top_driver = scores.loc[scores.groupby(["row", "intervention"])["score"].idxmax()]
+        drivers = dict(zip(zip(top_driver["row"], top_driver["intervention"]), top_driver["feature"]))
         for r, t in totals.groupby(level="row"):
-            support[r] = label(t.droplevel("row").sort_values(ascending=False).index[0])
-    return pd.DataFrame({"main_factor": factors, "main_reason": reasons, "suggested_support": support},
-                        index=contributions.index)
+            first = t.droplevel("row").sort_values(ascending=False).index[0]
+            driver = drivers[(r, first)]
+            if low[r] and driver not in LOW_BAND_DRIVERS:
+                support[r] = NO_LOW_SUGGESTION
+                continue
+            support[r] = label(first)
+            support_reason[r] = support_sentence(first, phrase(driver, values.at[contributions.index[r], driver]))
+    return pd.DataFrame({"main_factor": factors, "main_reason": reasons, "suggested_support": support,
+                         "support_reason": support_reason}, index=contributions.index)
 
 
 def selected_row(rows: list, selection: dict | None):
@@ -239,8 +256,9 @@ def snapshot(matrix: pd.DataFrame, presentation: str, module: str, student: int,
 
 def support_counts(supports: pd.Series) -> pd.Series:
     """Flagged students per support type (by label, in the order of INTERVENTIONS, zeros kept) from the
-    suggested_support column; students with no matched type are counted under NO_SUPPORT, last."""
-    order = [label(name) for name in INTERVENTIONS] + [NO_SUPPORT]
+    suggested_support column; then students with no matched type (NO_SUPPORT) and Low-band students with no
+    specific support (NO_LOW_SUGGESTION), last."""
+    order = [label(name) for name in INTERVENTIONS] + list(NOT_A_TYPE)
     return supports.value_counts().reindex(order, fill_value=0).astype(int)
 
 

@@ -60,6 +60,7 @@ from sar.service.figures import band_figure, hidden_bands  # noqa: E402
 from sar.service.priority import (  # noqa: E402
     NO_LOW_SUGGESTION,
     NO_SUPPORT,
+    NOT_A_TYPE,
     chart_factors,
     for_reasons,
     never_first,
@@ -212,6 +213,8 @@ WHY_LEGEND = ("Red bars raise the risk score and teal bars lower it. A longer ba
               "are in the table below.")
 PSEUDONYM_NOTE = "Student IDs are the pseudonymised identifiers published with OULAD."
 DESCRIPTIVE = "Similar past students are descriptive, not evidence of effectiveness"
+MAIN_VS_SUPPORT = ("The main reason is the single input that raises the score most, while the suggested support is "
+                   "the type that best matches the student's drivers overall, so its reason can differ.")
 CALIBRATION_NOTE = ("Each point is a bin of {val} students by calibrated score (width 0.1): its mean calibrated score "
                     "against the share who went on to fail or withdraw, with the number of students beside it. Points "
                     "on the diagonal are well calibrated. Band cutoffs: Medium from {medium:.2f}, High from "
@@ -290,11 +293,13 @@ def get_explanation(models_dir: str, presentation: str, module: str, student: in
 
 @st.cache_data(show_spinner="Preparing reasons and suggestions...")
 def get_details(models_dir: str, presentation: str, keys: pd.DataFrame, _fitted, _config, _matrix) -> pd.DataFrame:
-    """Main reason and suggested support for the students in `keys` (key columns, in list order). Uses the
+    """Main reason, suggested support and its reason for the students in `keys` (key columns and risk band, in
+    list order); the Low-band rule applies to the suggested support. Uses the
     precomputed explanations when present; otherwise explains at most MAX_LIVE_REASONS students, the
     top of the list, and marks the rest to be opened one at a time."""
     features = _fitted["features"]
-    out = keys.reset_index(drop=True).assign(main_reason=OPEN_FOR_DETAILS, suggested_support=OPEN_FOR_DETAILS)
+    out = keys.reset_index(drop=True).assign(main_reason=OPEN_FOR_DETAILS, suggested_support=OPEN_FOR_DETAILS,
+                                             support_reason=OPEN_FOR_DETAILS)
     rows = out[KEY].merge(_matrix, on=KEY, how="left")
     stored = get_shap_cache(models_dir, presentation, _config)
     if stored.ok:
@@ -311,8 +316,9 @@ def get_details(models_dir: str, presentation: str, keys: pd.DataFrame, _fitted,
                    if len(live) else pd.DataFrame(columns=features))
     out = out.assign(main_factor=None, prepared=known)
     if known.any():
-        details = priority_details(rows.loc[known, features], contrib.set_axis(rows.index[known]))
-        cols = ["main_factor", "main_reason", "suggested_support"]
+        details = priority_details(rows.loc[known, features], contrib.set_axis(rows.index[known]),
+                                   out.loc[known, "band"])
+        cols = ["main_factor", "main_reason", "suggested_support", "support_reason"]
         out.loc[known, cols] = details[cols].values
     return out
 
@@ -631,6 +637,7 @@ def support_cards(expl, rec) -> None:
                         unsafe_allow_html=True)
             st.write(support_line(expl, s))
     with st.expander("About these suggestions"):
+        st.caption(MAIN_VS_SUPPORT)
         st.caption(similar_definition(rec.neighbours))
         st.caption(f"{DESCRIPTIVE}. {NOTE}")
 
@@ -1063,7 +1070,8 @@ def flag_state(c: View) -> FlagState:
     scored = scored.assign(flagged=flagging.flagged)
     in_view = scored if c.module == ALL_MODULES else scored[scored["code_module"] == c.module]
     flagged = in_view[in_view["flagged"]].sort_values("rank")
-    details = (get_details(models, c.presentation, flagged[KEY].reset_index(drop=True), fitted, final.config, matrix)
+    details = (get_details(models, c.presentation, flagged[KEY + ["band"]].reset_index(drop=True), fitted, final.config,
+                           matrix)
                if len(flagged) else None)
     return FlagState(scored, in_view, flag_outcome(in_view, in_view["flagged"]), flagged, details)
 
@@ -1151,7 +1159,7 @@ def review_table(fs: FlagState, pres: str) -> None:
     if not details["prepared"].all():
         st.caption(f"Reasons and suggestions are prepared for the first {MAX_LIVE_REASONS} students listed.")
     st.caption("Select a row to open the student. " + PSEUDONYM_NOTE)
-    export = priority_export(listing, fs.flagged["score"], score_source(pres))
+    export = priority_export(listing, fs.flagged["score"], score_source(pres), details["support_reason"])
     st.download_button("Download the list (CSV)", export.to_csv(index=False),
                        file_name=f"priority_{pres}{'_in_sample' if ctl.in_sample else ''}.csv", mime="text/csv")
 
@@ -1259,7 +1267,7 @@ def page_support() -> None:
     flagged = int(counts.sum())
     st.caption(f"{rule_caption(ctl)} {flagged:,} flagged students, counted by the support type suggested first "
                "for each.")
-    top = counts.drop(NO_SUPPORT).idxmax()
+    top = counts.drop(list(NOT_A_TYPE)).idxmax()
     if counts[top] > flagged / 2:
         st.markdown(f"Most flagged students ({counts[top] / flagged:.0%}) share the same primary suggestion, {top}, "
                     "because the rules map a small set of Day 30 drivers to a few support types.")
@@ -1276,9 +1284,13 @@ def page_support() -> None:
     if counts[NO_SUPPORT]:
         st.caption(f"{counts[NO_SUPPORT]:,} flagged students have no input that raises the score noticeably, so no "
                    "support type is matched.")
+    if counts[NO_LOW_SUGGESTION]:
+        st.caption(f"{counts[NO_LOW_SUGGESTION]:,} flagged Low-band students have no specific support suggested at "
+                   f"Day {CUTOFF_DAY}: their first suggestion does not come from a missed assessment or a spell "
+                   "without activity.")
     left, right = st.columns(2)
     with left.container(border=True, key="card-support-counts"):
-        show_chart(support_bar_chart(counts.drop(NO_SUPPORT)))
+        show_chart(support_bar_chart(counts.drop(list(NOT_A_TYPE))))
     by_module = pd.crosstab(fs.flagged["code_module"].to_numpy(), fs.details["suggested_support"].to_numpy())
     by_module = by_module.reindex(columns=[INTERVENTIONS[n][0] for n in INTERVENTIONS], fill_value=0)
     with right.container(border=True, key="card-support-modules"):

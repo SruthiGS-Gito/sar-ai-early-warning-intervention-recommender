@@ -858,11 +858,11 @@ def test_support_page_counts_the_primary_suggestion_of_each_flagged_student(synt
     for name, (title, _) in INTERVENTIONS.items():
         assert (priority.never_first(name) in text) == (counts[title] == 0)
     flagged = int(counts.sum())
-    top = counts.drop(priority.NO_SUPPORT).idxmax()
+    top = counts.drop(list(priority.NOT_A_TYPE)).idxmax()
     assert ("Most flagged students" in text) == (counts[top] > flagged / 2)
     specs = {s["layout"]["title"]["text"]: s for s in _chart_specs(at)}
     by_module = specs["Primary suggestion by module"]
-    assert sum(sum(t["y"]) for t in by_module["data"]) == int(counts.drop(priority.NO_SUPPORT).sum())
+    assert sum(sum(t["y"]) for t in by_module["data"]) == int(counts.drop(list(priority.NOT_A_TYPE)).sum())
     for spec in specs.values():                                   # legend beside the plot, never under the title
         legend = spec["layout"].get("legend", {})
         assert legend.get("orientation") == "v" and legend.get("x", 0) > 1 and legend.get("xanchor") == "left"

@@ -119,13 +119,18 @@ class FlagOutcome:
 
 
 EXPORT_SCORE = "Calibrated score"
+EXPORT_SUPPORT_REASON = "Reason for support"
 
 
-def priority_export(listing: pd.DataFrame, scores, source: str) -> pd.DataFrame:
+def priority_export(listing: pd.DataFrame, scores, source: str, support_reasons=None) -> pd.DataFrame:
     """The priority list as downloaded: the listed columns, the calibrated score to three decimals placed
-    after "Risk band", and the score source. `scores` holds the calibrated score of each listed row, in order."""
+    after "Risk band", the primary suggestion's own reason placed after "Suggested support" (when
+    `support_reasons` is given), and the score source. `scores` and `support_reasons` hold one value per listed
+    row, in order."""
     out = listing.reset_index(drop=True)
     out.insert(out.columns.get_loc("Risk band") + 1, EXPORT_SCORE, np.round(np.asarray(scores, dtype=float), 3))
+    if support_reasons is not None:
+        out.insert(out.columns.get_loc("Suggested support") + 1, EXPORT_SUPPORT_REASON, list(support_reasons))
     return out.assign(score_source=source)
 
 

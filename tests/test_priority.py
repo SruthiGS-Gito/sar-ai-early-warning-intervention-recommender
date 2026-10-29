@@ -39,6 +39,30 @@ def test_batch_details_match_the_single_student_explanation_and_recommendation(m
         rec = recommend(expl, part.loc[[i]], pool)
         expected = rec.suggestions[0].label if rec.suggestions else priority.NO_SUPPORT
         assert details.loc[i, "suggested_support"] == expected
+        reason = (priority.support_sentence(rec.suggestions[0].intervention,
+                                            c.loc[rec.suggestions[0].drivers[0], "phrase"]) if rec.suggestions else "")
+        assert details.loc[i, "support_reason"] == reason
+
+
+def test_batch_details_apply_the_low_band_rule_as_the_student_page(matrix, explained):
+    part, features, base, contrib, raw = explained
+    details = priority.priority_details(part[features], contrib, pd.Series("Low", index=part.index))
+    pool = NeighbourPool(matrix[matrix["code_presentation"] != "2014J"], k=30)
+    withheld = 0
+    for i in part.index:
+        expl = priority.for_reasons(explanation_from_contributions(part.loc[i, features], contrib.loc[i], base,
+                                                                   raw.loc[i], "Low"))
+        rec = recommend(expl, part.loc[[i]], pool)
+        first = priority.primary_for(rec)
+        if first is not None:
+            assert details.loc[i, "suggested_support"] == first.label
+            assert details.loc[i, "support_reason"] == priority.support_sentence(
+                first.intervention, expl.contributions.loc[first.drivers[0], "phrase"])
+        else:
+            expected = priority.NO_LOW_SUGGESTION if rec.suggestions else priority.NO_SUPPORT
+            assert details.loc[i, "suggested_support"] == expected and details.loc[i, "support_reason"] == ""
+            withheld += expected == priority.NO_LOW_SUGGESTION
+    assert withheld                                                       # the rule is exercised
 
 
 def test_main_reason_never_uses_a_protected_or_non_actionable_input(explained):
@@ -171,10 +195,12 @@ def test_snapshot_compares_with_the_module_median(matrix):
 def test_support_counts_keep_every_type_in_order():
     from sar.recommend.interventions import INTERVENTIONS, label
 
-    counts = priority.support_counts(pd.Series(["Tutoring", "Weekly check-ins", "Tutoring", priority.NO_SUPPORT]))
-    assert list(counts.index) == [label(n) for n in INTERVENTIONS] + [priority.NO_SUPPORT]
+    counts = priority.support_counts(pd.Series(["Tutoring", "Weekly check-ins", "Tutoring", priority.NO_SUPPORT,
+                                                priority.NO_LOW_SUGGESTION]))
+    assert list(counts.index) == [label(n) for n in INTERVENTIONS] + [priority.NO_SUPPORT, priority.NO_LOW_SUGGESTION]
+    assert counts[priority.NO_LOW_SUGGESTION] == 1
     assert counts["Tutoring"] == 2 and counts["Weekly check-ins"] == 1 and counts["Mentoring"] == 0
-    assert counts.sum() == 4
+    assert counts.sum() == 5
 
 
 def test_never_first_is_one_short_sentence_naming_a_type_that_scores_at_least_as_high():

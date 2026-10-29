@@ -351,9 +351,12 @@ def test_priority_export_adds_the_calibrated_score_after_the_band(matrix, small_
     listing = pd.DataFrame({"Rank": range(1, len(flagged) + 1), "Student ID": flagged["id_student"].astype(str),
                             "Module": flagged["code_module"], "Risk band": flagged["band"].astype(str),
                             "Day 30 snapshot": "", "Main reason": "", "Suggested support": ""})
-    export = views.priority_export(listing, flagged["score"], "validation (2014J)")
+    reasons = [f"reason {i}" for i in range(len(flagged))]
+    export = views.priority_export(listing, flagged["score"], "validation (2014J)", reasons)
     assert list(export.columns) == ["Rank", "Student ID", "Module", "Risk band", "Calibrated score",
-                                    "Day 30 snapshot", "Main reason", "Suggested support", "score_source"]
+                                    "Day 30 snapshot", "Main reason", "Suggested support", "Reason for support",
+                                    "score_source"]
+    assert list(export["Reason for support"]) == reasons
     assert not set(PROTECTED_FEATURES) & set(export.columns)
     got = export["Calibrated score"]
     assert got.between(0, 1).all() and (got == got.round(3)).all()
