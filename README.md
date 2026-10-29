@@ -126,7 +126,7 @@ Notebooks, by author:
 - Ancy Michael: `206_AM_indicator_combinations.ipynb`
 - Abhijith M S and Gouri M: `student_academic_risk.ipynb`
 - Gouri M: `Engagement profile charts and export.ipynb`
-- Midhula M: `xgboost-random-forest (2).ipynb`, `xgboost-random-forest (4).ipynb`
+- Midhula M S: `xgboost-random-forest (2).ipynb`, `xgboost-random-forest (4).ipynb`
 
 ## Limitations
 
