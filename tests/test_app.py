@@ -202,7 +202,9 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
     tab = _tab(at, "Student")
     text = _texts(tab)
     assert f"### :material/person: Student {sid}" in text and f"Module **{module}** · Presentation 2014J" in text
-    assert "This is a model prediction. It supports, and does not replace, professional judgment." in text
+    assert "This is a model prediction" not in text
+    assert ("The risk band comes from a model and supports, and does not replace, professional judgment. The "
+            "percentage is the observed rate for students in this band, not a prediction for this student.") in text
     from sar.service import views
     scored = views.score_presentation(load_final_model(synthetic_env / "models").value.fitted, matrix, "2014J")
     me = scored[(scored["code_module"] == module) & (scored["id_student"] == sid)].iloc[0]

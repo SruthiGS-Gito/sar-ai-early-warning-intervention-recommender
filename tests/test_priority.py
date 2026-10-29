@@ -62,6 +62,9 @@ def test_support_sentence_names_the_fact_then_the_support():
             == "1 assessment missed; a short weekly check-in can help them keep up with activity and deadlines.")
     assert priority.support_sentence("tutoring", "an average score of 41").startswith("An average score of 41; ")
     assert priority.similar_line(50, 1) == "Among 50 similar earlier students, 1 ended at risk."
+    assert priority.how_many_at_risk(50, 50) == "All 50"
+    assert priority.how_many_at_risk(0, 50) == "None of them"
+    assert priority.how_many_at_risk(12, 50) == "12 of the 50"
 
 
 def test_chart_factors_and_verdict_name_only_shown_actionable_factors(explained):

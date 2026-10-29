@@ -57,13 +57,24 @@ def similar_line(n: int, n_at_risk: int) -> str:
     return f"Among {n:,} similar earlier students, {n_at_risk:,} ended at risk."
 
 
+def how_many_at_risk(n_at_risk: int, n: int) -> str:
+    """The start of a sentence saying how many of `n` similar students ended at risk: "All 50", "None of them"
+    or "12 of the 50"."""
+    if n_at_risk == n:
+        return f"All {n:,}"
+    if n_at_risk == 0:
+        return "None of them"
+    return f"{n_at_risk:,} of the {n:,}"
+
+
 def similar_definition(neighbours) -> str:
     """How the similar-student group is built, and what it found, in plain words."""
     where = f"in module {neighbours.module}" if neighbours.same_module else "across all modules"
     text = (f"Similar earlier students: the {neighbours.n:,} students {where} from the training presentations "
             f"({', '.join(neighbours.presentations)}) whose Day 30 activity, assessment and study-load inputs are "
             "closest to this student's. Background characteristics are not used, and students who also appear in "
-            f"the validation presentation are left out. {neighbours.n_at_risk:,} of them ended at risk (Fail or "
+            f"the validation presentation are left out. {how_many_at_risk(neighbours.n_at_risk, neighbours.n)} "
+            "ended at risk (Fail or "
             "Withdrawn). They are matched on inputs, not on the model's score, so this share can differ from the "
             "band's observed outcome.")
     return f"{text} {neighbours.note}" if neighbours.note else text

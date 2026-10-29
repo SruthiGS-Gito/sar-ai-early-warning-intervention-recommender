@@ -202,7 +202,8 @@ SUPPORT_NOTE = ("Suggestions are rule-based: they match the model's risk drivers
 NOT_SHOWN = "Not shown"
 NOT_YET = "Not available yet"
 IN_SAMPLE_HELP = "In-sample scores are optimistic and not informative."
-DISCLAIMER = "This is a model prediction. It supports, and does not replace, professional judgment."
+DISCLAIMER = "The risk band comes from a model and supports, and does not replace, professional judgment."
+RING_NOTE = "The percentage is the observed rate for students in this band, not a prediction for this student."
 WRAP = 30  # characters per line of a factor label
 MAX_LIVE_REASONS = 50
 OPEN_FOR_DETAILS = "Open the student to see"
@@ -560,17 +561,19 @@ def student_header(sid: int, module: str, pres: str, me: pd.Series, rank: int, n
         who.markdown(band_pill(band) + f"&nbsp; ranked {rank:,} of {n_module:,} in module"
                      + (" (in-sample)" if ctl.in_sample else ""), unsafe_allow_html=True,
                      help=BAND_HELP.format(**{k.lower(): v for k, v in edges.items()}))
+        has_ring = False
         if ctl.in_sample:
             note.caption(IN_SAMPLE_NOTE)
         else:
             scored = get_scores(processed, models, TEST_PRESENTATION, fitted, matrix)
             rate, n, scope = band_outcome(scored, module, band)
             if n:
+                has_ring = True
                 with ring:
                     show_chart(ring_chart(rate, band))
                 note.markdown("**Observed outcome for this band**", help=RING_HELP)
                 note.caption(band_outcome_text(band, module, rate, n, scope))
-        note.caption(DISCLAIMER)
+        note.caption(f"{DISCLAIMER} {RING_NOTE}" if has_ring else DISCLAIMER)
 
 
 def indicator_cards(pres: str, module: str, sid: int) -> None:
