@@ -122,9 +122,10 @@ STYLE = """<style>
 .pill-info {color: #b9b2ff; background: rgba(124,108,255,0.16);}
 [class*="st-key-card-kpi"] [data-testid="stMetricValue"] {font-size: 2rem;}
 [class*="st-key-card-"] [data-testid="stMetric"] {padding: 0;}
-[class*="st-key-card-kpi"] {min-height: 11rem;}
-[class*="st-key-card-module"] {min-height: 9.5rem;}
-[class*="st-key-card-ind"] {min-height: 8.5rem;}
+[data-testid="stColumn"] > [data-testid="stVerticalBlock"] > [data-testid="stLayoutWrapper"]:last-child:has(> [class*="st-key-card-"]) {
+    flex: 1 1 auto;}
+[data-testid="stColumn"] > [data-testid="stVerticalBlock"] > [data-testid="stLayoutWrapper"]:last-child > [class*="st-key-card-"] {
+    height: 100%; justify-content: flex-start;}
 .kbar {height: 6px; border-radius: 3px; background: rgba(154,163,199,0.18); overflow: hidden; margin-top: 0.4rem;}
 .kbar span {display: block; height: 100%; background: linear-gradient(90deg, #4f8cff, #7c6cff);}
 .kbar.empty {background: transparent;}
