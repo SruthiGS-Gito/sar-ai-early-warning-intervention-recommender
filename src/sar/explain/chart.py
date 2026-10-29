@@ -12,6 +12,7 @@ import math
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from sar.rounding import fixed
 from sar.viz.plots import AT_RISK, CATEGORY_LABELS, FEATURE_LABELS, NEUTRAL, ON_TRACK, _clean, save_fig
 
 COURSE_COLOUR = "#DD8452"
@@ -25,7 +26,7 @@ def _fmt(v) -> str:
     if v is None or (isinstance(v, float) and math.isnan(v)):
         return "none yet"
     if isinstance(v, (int, float)):
-        return f"{v:,.0f}" if float(v).is_integer() or abs(v) >= 100 else f"{v:,.1f}"
+        return fixed(v, 0 if float(v).is_integer() or abs(v) >= 100 else 1, grouping=True)
     return str(v)
 
 

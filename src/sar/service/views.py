@@ -22,6 +22,7 @@ import pandas as pd
 from sar.config import RISK_BANDS
 from sar.data.split import TEST_PRESENTATION
 from sar.models.final import predict, reliability
+from sar.rounding import round_half_up
 
 KEY = ["code_module", "code_presentation", "id_student"]
 MIN_CELL = 20
@@ -128,7 +129,7 @@ def priority_export(listing: pd.DataFrame, scores, source: str, support_reasons=
     `support_reasons` is given), and the score source. `scores` and `support_reasons` hold one value per listed
     row, in order."""
     out = listing.reset_index(drop=True)
-    out.insert(out.columns.get_loc("Risk band") + 1, EXPORT_SCORE, np.round(np.asarray(scores, dtype=float), 3))
+    out.insert(out.columns.get_loc("Risk band") + 1, EXPORT_SCORE, [round_half_up(s, 3) for s in scores])
     if support_reasons is not None:
         out.insert(out.columns.get_loc("Suggested support") + 1, EXPORT_SUPPORT_REASON, list(support_reasons))
     return out.assign(score_source=source)

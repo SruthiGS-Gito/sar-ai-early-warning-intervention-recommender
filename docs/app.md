@@ -57,6 +57,7 @@ Display rules:
 - The validation presentation (2014J) is shown by default. A training presentation is offered only after the user turns on "Show training presentations (in-sample scores)" under Advanced; it is then labelled in the presentation list, in the sidebar warning, on the cards and in every exported table.
 - Explanations that used to sit under the charts are in the section headings' hover help and in About, "Reading the Modules page"; the in-sample warning and the funnel's retrospective and carry-forward note stay visible.
 - Protected attributes are not model inputs and never appear in explanations or suggestions.
+- Rounding: every displayed value that is rounded to a whole number or fixed decimals goes through one helper, `sar.rounding`, which rounds half up (halves away from zero, so 2.5 shows as 3 and a median of 10.25 as 10.3) rather than to the nearest even value. It covers the Day 30 indicator values and module medians, the reason, verdict and support sentences (and so the Main reason and Reason for support columns), the Day 30 snapshot on screen and in the CSV, the values and SHAP values of the all-inputs table and the factor chart's hover, and the calibrated score on screen and in the CSV, so the screen and the download agree. Percentages, the cutoffs and the capacity count are formatted as before.
 
 ## Team tables
 Three aggregated tables, built by one command after the feature matrix and the final model:

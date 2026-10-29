@@ -45,6 +45,7 @@ from sar.explain.shap_explain import (  # noqa: E402
 from sar.recommend.interventions import INTERVENTIONS  # noqa: E402
 from sar.recommend.neighbours import NeighbourPool  # noqa: E402
 from sar.recommend.recommender import NOTE, recommend  # noqa: E402
+from sar.rounding import fixed, round_half_up  # noqa: E402
 from sar.service.data import (  # noqa: E402
     OPTIONAL_TABLES,
     SHAP_PREFIX,
@@ -517,7 +518,8 @@ def open_selected() -> None:
 
 
 def number(v: float) -> str:
-    return f"{v:,.0f}" if float(v).is_integer() else f"{v:,.1f}"
+    """An indicator value or module median: a whole number, or one decimal, rounded half up."""
+    return fixed(v, 0 if float(v).is_integer() else 1, grouping=True)
 
 
 def why_chart(raising: pd.DataFrame, lowering: pd.DataFrame):
@@ -531,7 +533,8 @@ def why_chart(raising: pd.DataFrame, lowering: pd.DataFrame):
         fig.add_trace(go.Bar(x=top.loc[part, "contribution"].tolist(),
                              y=[lab for lab, p in zip(labels, part) if p], orientation="h", name=name,
                              marker_color=colour, customdata=top.loc[part, "phrase"].tolist(),
-                             hovertemplate="%{customdata}: %{x:+.3f}<extra></extra>"))
+                             hovertext=[fixed(x, 3, sign=True) for x in top.loc[part, "contribution"]],
+                             hovertemplate="%{customdata}: %{hovertext}<extra></extra>"))
     fig.update_layout(title="What moves this score", height=CHART_HEIGHT, margin={"t": 90, "l": 10, "r": 10},
                       xaxis_title=SHAP_SCALE,
                       yaxis={"automargin": True, "categoryorder": "array", "categoryarray": labels})
@@ -647,7 +650,7 @@ def inputs_table(expl) -> pd.DataFrame:
     to three decimals. `expl` is the model's explanation, not the copy for_reasons adjusts, so a weighted score
     that carries no weight keeps its value here."""
     table = explanation_table(expl)
-    table["Change in score"] = [f"{v:+.3f}" for v in table["Change in score"]]
+    table["Change in score"] = [fixed(v, 3, sign=True) for v in table["Change in score"]]
     table["Group"] = table["Group"].map(GROUP_NAMES).fillna(table["Group"])
     return table.rename(columns={"Change in score": "Change in raw forest score"})
 
@@ -679,7 +682,7 @@ def student_view(pres: str, module: str, sid: int) -> None:
         with st.container(border=True, key="card-why"):
             show_chart(why_chart(raising, lowering))
             st.caption(WHY_LEGEND)
-            st.caption(f"Calibrated model score {float(me['score']):.2f}, calibrated across all modules.")
+            st.caption(f"Calibrated model score {fixed(me['score'], 2)}, calibrated across all modules.")
         with st.expander("In words, and all inputs"):
             st.write(shown.sentence)
             st.dataframe(inputs_table(expl), hide_index=True)
@@ -1120,7 +1123,7 @@ def reasons_chart(counts: pd.Series, flagged: int):
 def day30_snapshots(students: pd.DataFrame) -> list[str]:
     """One short line of Day 30 facts per student, from the feature matrix, in the order of `students`."""
     rows = students[KEY].merge(matrix[KEY + ["active_days", "n_missed", "n_submitted"]], on=KEY, how="left")
-    return [f"{a:.0f} active day{'' if a == 1 else 's'}, {m:.0f} missed, {n:.0f} submitted"
+    return [f"{fixed(a)} active day{'' if round_half_up(a) == 1 else 's'}, {fixed(m)} missed, {fixed(n)} submitted"
             for a, m, n in zip(rows["active_days"], rows["n_missed"], rows["n_submitted"])]
 
 
