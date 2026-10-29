@@ -248,6 +248,32 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
         word = "Same as" if diff == 0 else "Above" if diff > 0 else "Below"
         assert f'pill-info">{word}</span>&nbsp; module median {r["median"]:,.0f}' in text
     assert "provisional" not in text.lower()
+    _assert_all_suggestions_shown(at, matrix, synthetic_env, module, sid, str(me["band"]))
+
+
+def _assert_all_suggestions_shown(at, matrix, env, module, sid, band):
+    """The Support tab lists every suggestion shown_suggestions allows, outside any expander: one Primary
+    card (also on the Overview tab), then one Also consider card per other suggestion, in order."""
+    from sar.data.split import make_split
+    from sar.explain.shap_explain import explain_student
+    from sar.recommend.neighbours import NeighbourPool
+    from sar.recommend.recommender import recommend
+    from sar.service.priority import for_reasons, shown_suggestions
+
+    fitted = load_final_model(env / "models").value.fitted
+    val = matrix[matrix["code_presentation"] == "2014J"]
+    row = val[(val["code_module"] == module) & (val["id_student"] == sid)].head(1)
+    shown = for_reasons(explain_student(fitted["model"], row[fitted["features"]], band=band))
+    expected = shown_suggestions(recommend(shown, row, NeighbourPool(make_split(matrix)[0])))
+    tab = at.main
+    text = _texts(tab)
+    labels = re.findall(r'Also consider</span>&nbsp; \*\*(.+?)\*\*', text)
+    assert labels == [s.label for s in expected[1:]]
+    if expected:
+        assert text.count(f'Primary</span>&nbsp; **{expected[0].label}**') == 2      # Overview and Support tabs
+    expanders = {e.label for e in tab.expander}
+    assert not {"Other options", "Rule-based suggestions"} & expanders and "About these suggestions" in expanders
+    return expected
 
 
 def test_flagging_rule_and_three_d_view_from_the_sidebar(synthetic_env):
@@ -614,9 +640,12 @@ def test_example_buttons_choose_a_validation_student_in_the_band(synthetic_env, 
     text = _texts(at)
     assert f'">{band} risk</span>' in text and f"Module **{expected[0]}**" in text and "ranked " in text
     assert "Primary</span>" in text
-    expanders = [e.label for e in _tab(at, "Student").expander]
+    shown = _assert_all_suggestions_shown(_go(at, "Student"), matrix, synthetic_env, *expected, band)
     if band == "Low":
-        assert "Low risk: support is optional." in text and "Other options" not in expanders
+        assert "Low risk: support is optional." in text
+        from sar.service.priority import LOW_BAND_DRIVERS
+
+        assert all(s.drivers[0] in LOW_BAND_DRIVERS for s in shown)
     else:
         assert "support is optional" not in text
     at.button(key=f"example_{band.lower()}").click().run()          # same seed, same student

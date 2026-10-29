@@ -120,6 +120,17 @@ def primary_for(rec):
     return first
 
 
+def shown_suggestions(rec) -> list:
+    """Every suggestion the student view shows, primary first, in the recommender's order (largest total
+    of weight x contribution first). Empty when primary_for gives none. For a Low-band student the Low-band
+    rule applies to each suggestion: only those from a missed assessment or a spell without activity."""
+    first = primary_for(rec)
+    if first is None:
+        return []
+    others = [s for s in rec.suggestions[1:] if not rec.optional or s.drivers[0] in LOW_BAND_DRIVERS]
+    return [first, *others]
+
+
 # Kinds of main reason, for counting the flagged students: a main reason names one input, and the
 # inputs that describe the same kind of difficulty are counted together.
 REASON_KINDS = {

@@ -115,6 +115,21 @@ def test_low_band_gets_a_suggestion_only_for_missed_work_or_inactivity():
     assert priority.primary_for(SimpleNamespace(suggestions=[], optional=False)) is None
 
 
+def test_shown_suggestions_list_all_in_order_and_apply_the_low_band_rule():
+    from types import SimpleNamespace
+
+    def rec(band_low, *drivers):
+        return SimpleNamespace(suggestions=[SimpleNamespace(drivers=[d], label=d) for d in drivers],
+                               optional=band_low)
+
+    three = rec(False, "mean_score", "n_missed", "studied_credits")
+    assert priority.shown_suggestions(three) == three.suggestions                 # all three, recommender order
+    low = rec(True, "n_missed", "mean_score", "trailing_inactive_days")
+    assert [s.label for s in priority.shown_suggestions(low)] == ["n_missed", "trailing_inactive_days"]
+    assert priority.shown_suggestions(rec(True, "mean_score", "n_missed")) == []  # no primary, nothing shown
+    assert priority.shown_suggestions(rec(False)) == []
+
+
 def test_reason_counts_group_kinds_and_put_small_ones_in_other():
     factors = pd.Series(["mean_score"] * 50 + ["weighted_score"] * 10 + ["n_missed"] * 30 + ["n_late"] * 3
                         + [None] * 7)

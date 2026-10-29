@@ -68,6 +68,7 @@ from sar.service.priority import (  # noqa: E402
     reason_counts,
     selected_row,
     short_reason,
+    shown_suggestions,
     similar_definition,
     snapshot,
     support_counts,
@@ -613,17 +614,15 @@ def primary_card(expl, rec, where: str) -> None:
 
 
 def support_cards(expl, rec) -> None:
-    """The primary suggestion; the other matched types under "Other options" (for a Low-band student, the
-    rule-based matches under their own expander); and, once, how the similar-student group is built and the
-    note that suggestions are rule-based and descriptive."""
+    """Every suggestion shown directly: the primary card, then one card per other suggestion tagged Also
+    consider (sar.service.priority.shown_suggestions applies the Low-band rule); and, once, how the
+    similar-student group is built and the note that suggestions are rule-based and descriptive."""
     primary_card(expl, rec, "support")
-    first = primary_for(rec)
-    others = [s for s in rec.suggestions if s is not first]
-    if others:
-        with st.expander("Rule-based suggestions" if rec.optional else "Other options"):
-            for s in others:
-                st.markdown(f'<span class="pill pill-info">Also consider</span>&nbsp; **{s.label}**: '
-                            + support_line(expl, s), unsafe_allow_html=True)
+    for i, s in enumerate(shown_suggestions(rec)[1:], start=1):
+        with st.container(border=True, key=f"card-also-{i}"):
+            st.markdown(f'<span class="pill pill-info">Also consider</span>&nbsp; **{s.label}**',
+                        unsafe_allow_html=True)
+            st.write(support_line(expl, s))
     with st.expander("About these suggestions"):
         st.caption(similar_definition(rec.neighbours))
         st.caption(f"{DESCRIPTIVE}. {NOTE}")
