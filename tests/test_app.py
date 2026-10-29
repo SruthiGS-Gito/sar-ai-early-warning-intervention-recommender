@@ -316,6 +316,34 @@ def test_lookup_uses_precomputed_explanations_when_present(synthetic_env, matrix
     assert not (listing["Main reason"] == "Open the student to see").any()
 
 
+def test_all_inputs_table_shows_the_models_own_shap_values(synthetic_env, matrix):
+    """Every input, rounded once to three decimals from the model's SHAP value, including a weighted score that
+    carries no weight (the reasons give it none)."""
+    from sar.explain.chart import short_label
+
+    models = synthetic_env / "models"
+    loaded = load_final_model(models).value
+    features = loaded.fitted["features"]
+    changed = matrix.copy()                                   # the shared fixture stays unchanged
+    part = changed[changed["code_presentation"] == "2014J"]
+    i = part.index[part["mean_score"].notna()][0]
+    changed.loc[i, "weighted_score"] = float("nan")           # a weighted score that carries no weight
+    changed.to_csv(synthetic_env / "data" / "processed" / "day30_feature_matrix.csv", index=False)
+    part = changed[changed["code_presentation"] == "2014J"]
+    base, contrib, raw = explain_rows(loaded.fitted["model"], part[features])
+    save_shap_cache(models, "2014J", part[["code_module", "code_presentation", "id_student"]], contrib, raw, base,
+                    loaded.config)
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    _open_student(at, part.at[i, "code_module"], int(part.at[i, "id_student"]))
+    assert not at.exception
+    table = [df.value for df in at.dataframe if "Change in raw forest score" in df.value.columns][0]
+    shown = dict(zip(table["Input"], table["Change in raw forest score"]))
+    assert len(shown) == len(features)
+    for f in features:
+        assert shown[short_label(f)] == f"{contrib.at[i, f]:+.3f}", f
+    assert contrib.at[i, "weighted_score"] != 0
+
+
 def test_training_presentation_is_labelled(synthetic_env):
     at = _open_training(AppTest.from_file(APP, default_timeout=120).run())
     assert not at.exception

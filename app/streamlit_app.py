@@ -636,7 +636,9 @@ def support_cards(expl, rec) -> None:
 
 
 def inputs_table(expl) -> pd.DataFrame:
-    """Every input with its value and its change in the raw forest score, to three decimals."""
+    """Every input with its value and the model's own SHAP value (change in the raw forest score), rounded once
+    to three decimals. `expl` is the model's explanation, not the copy for_reasons adjusts, so a weighted score
+    that carries no weight keeps its value here."""
     table = explanation_table(expl)
     table["Change in score"] = [f"{v:+.3f}" for v in table["Change in score"]]
     table["Group"] = table["Group"].map(GROUP_NAMES).fillna(table["Group"])
@@ -673,7 +675,7 @@ def student_view(pres: str, module: str, sid: int) -> None:
             st.caption(f"Calibrated model score {float(me['score']):.2f}, calibrated across all modules.")
         with st.expander("In words, and all inputs"):
             st.write(shown.sentence)
-            st.dataframe(inputs_table(shown), hide_index=True)
+            st.dataframe(inputs_table(expl), hide_index=True)
     with support:
         if rec is None:
             st.info(pool_l.message)

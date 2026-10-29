@@ -90,6 +90,8 @@ def test_chart_keeps_background_in_its_own_panel(tmp_path, matrix, small_forest)
     assert total == pytest.approx(expl.score - expl.base_score, abs=1e-9)
     table = explanation_table(expl)
     assert len(table) == len(FEATURES) and isinstance(table, pd.DataFrame)
+    # unrounded, so the app rounds the model's value once
+    assert sorted(table["Change in score"]) == sorted(expl.contributions["contribution"].astype(float))
 
 
 def test_final_model_explanations_have_no_protected_inputs(tmp_path, matrix, small_final):

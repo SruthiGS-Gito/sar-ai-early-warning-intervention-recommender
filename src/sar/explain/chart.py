@@ -87,11 +87,12 @@ def plot_explanation(expl, n: int = 8, save: bool = False, name: str = "student_
 
 
 def explanation_table(expl) -> pd.DataFrame:
-    """The contributions as a table for display: label, value, contribution, group."""
+    """The contributions as a table for display: label, value, contribution (unrounded, so that a display
+    rounds it once), group."""
     c = expl.contributions
     return pd.DataFrame({
         "Input": [short_label(f) for f in c.index],
         "Value": [_fmt(v) for v in c["value"]],
-        "Change in score": c["contribution"].round(4).values,
+        "Change in score": c["contribution"].to_numpy(dtype=float),
         "Group": c["group"].values,
     }).sort_values("Change in score", key=abs, ascending=False, ignore_index=True)
