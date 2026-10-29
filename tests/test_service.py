@@ -365,3 +365,24 @@ def test_priority_export_adds_the_calibrated_score_after_the_band(matrix, small_
         assert edges[band] - 5e-4 <= score <= upper[band] + 5e-4, (band, score)
     assert list(views.assign_risk_band(flagged["score"], small_final[0]["cutoffs"]).astype(str)) == list(
         export["Risk band"])
+
+
+def test_at_risk_by_module_and_presentation_covers_every_pair_and_hides_small_ones(matrix):
+    table = views.at_risk_by_module_and_presentation(matrix)
+    modules, intakes = sorted(matrix["code_module"].unique()), sorted(matrix["code_presentation"].unique())
+    assert list(zip(table["code_module"], table["code_presentation"])) == [(m, p) for m in modules for p in intakes]
+    assert table["students"].sum() == len(matrix)
+    for _, row in table.iterrows():
+        part = matrix[(matrix["code_module"] == row["code_module"])
+                      & (matrix["code_presentation"] == row["code_presentation"])]
+        assert row["students"] == len(part) and row["suppressed"] == (len(part) < views.MIN_CELL)
+        if len(part) >= views.MIN_CELL:
+            assert row["at_risk_rate"] == pytest.approx(part["at_risk"].mean())
+    # a small cell and a module that did not run in an intake are both suppressed, with no rate
+    small = matrix[~((matrix["code_module"] == "AAA") & (matrix["code_presentation"] == "2013B"))]
+    small = pd.concat([small[~((small["code_module"] == "BBB") & (small["code_presentation"] == "2014J"))],
+                       small[(small["code_module"] == "BBB") & (small["code_presentation"] == "2014J")].head(5)])
+    cells = views.at_risk_by_module_and_presentation(small).set_index(["code_module", "code_presentation"])
+    assert cells.loc[("AAA", "2013B"), "students"] == 0 and cells.loc[("BBB", "2014J"), "students"] == 5
+    for key in [("AAA", "2013B"), ("BBB", "2014J")]:
+        assert cells.loc[key, "suppressed"] and np.isnan(cells.loc[key, "at_risk_rate"])

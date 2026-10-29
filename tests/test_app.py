@@ -757,6 +757,49 @@ def test_modules_page_charts_come_from_observed_outcomes(tables_env, matrix):
     assert activity["text"] == [f"{r:.0%}<br>n = {n:,}" for r, n in zip(shown["at_risk_rate"], shown["students"])]
     funnel = [s for t, s in specs.items() if t.startswith("Students at each stage")][0]["data"][0]
     assert len(set(funnel["marker"]["color"])) > 1                         # blue-to-violet gradient
+    _assert_heatmap_matches(specs, views.at_risk_by_module_and_presentation(matrix))
+    assert "Observed outcomes, not model predictions" in _texts(at)
+
+
+HEATMAP = "Observed Fail or Withdrawn rate by module and intake (outcomes, not predictions)"
+
+
+def _assert_heatmap_matches(specs, table):
+    """The module-by-intake heatmap shows the service table: rate printed in shown cells, size on hover only
+    for shown cells, suppressed cells empty and labelled."""
+    heat = specs[HEATMAP]["data"][0]
+    assert heat["type"] == "heatmap" and heat["texttemplate"] == "%{text}" and (heat["zmin"], heat["zmax"]) == (0, 1)
+    assert heat["colorbar"]["tickformat"] == ".0%" and "%{customdata:,}" in heat["hovertemplate"]
+    assert not {c for _, c in heat["colorscale"]} & {"#ff5d73", "#ffb454", "#35d0ba"}   # never a band colour
+    assert heat["x"] == sorted(table["code_presentation"].unique()) and heat["y"] == sorted(table["code_module"].unique())
+    cells = table.set_index(["code_module", "code_presentation"])
+    labels = {(a["y"], a["x"]): a["text"] for a in specs[HEATMAP]["layout"].get("annotations", [])}
+    for i, module in enumerate(heat["y"]):
+        for j, intake in enumerate(heat["x"]):
+            cell = cells.loc[(module, intake)]
+            if cell["suppressed"]:
+                label = "no students" if cell["students"] == 0 else "n < 20"
+                assert heat["z"][i][j] is None and heat["customdata"][i][j] is None
+                assert heat["text"][i][j] == labels[(module, intake)] == label
+            else:
+                assert heat["z"][i][j] == pytest.approx(cell["at_risk_rate"])
+                assert heat["customdata"][i][j] == cell["students"]
+                assert heat["text"][i][j] == f"{cell['at_risk_rate']:.0%}"
+
+
+def test_heatmap_hides_small_cells_and_their_size(synthetic_env, matrix):
+    from sar.service import views
+
+    small = matrix[~((matrix["code_module"] == "AAA") & (matrix["code_presentation"] == "2013B"))]
+    keep = (small["code_module"] == "BBB") & (small["code_presentation"] == "2013J")
+    small = pd.concat([small[~keep], small[keep].head(7)])
+    small.to_csv(synthetic_env / "data" / "processed" / "day30_feature_matrix.csv", index=False)
+    at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Modules")
+    assert not at.exception
+    specs = {s["layout"]["title"]["text"]: s for s in _chart_specs(at) if s["layout"].get("title")}
+    table = views.at_risk_by_module_and_presentation(small)
+    assert table["suppressed"].sum() == 2
+    _assert_heatmap_matches(specs, table)
 
 
 def test_support_page_counts_the_primary_suggestion_of_each_flagged_student(synthetic_env, matrix, small_final):

@@ -79,6 +79,7 @@ from sar.service.views import (  # noqa: E402
     KEY,
     MIN_CELL,
     at_risk_by_activity,
+    at_risk_by_module_and_presentation,
     at_risk_by_presentation,
     band_outcome,
     band_evidence,
@@ -744,6 +745,38 @@ def intake_chart(table: pd.DataFrame, scope: str):
     return fig
 
 
+HEATMAP_TITLE = "Observed Fail or Withdrawn rate by module and intake (outcomes, not predictions)"
+# Navy to violet: no band colour, so no cell reads as a risk band.
+HEATMAP_SCALE = [[0.0, "#16203f"], [0.4, "#4f8cff"], [0.7, "#7c6cff"], [1.0, "#c084fc"]]
+
+
+def module_intake_heatmap(table: pd.DataFrame):
+    """Observed rate per module (rows) and intake (columns), printed in each cell; group size on hover.
+    Suppressed cells are left empty and labelled n < MIN_CELL, or "no students" where the module did not run."""
+    rate = table.pivot(index="code_module", columns="code_presentation", values="at_risk_rate")
+    n = table.pivot(index="code_module", columns="code_presentation", values="students").loc[rate.index, rate.columns]
+    modules, intakes = rate.index.tolist(), rate.columns.tolist()
+    z = [[None if pd.isna(v) else float(v) for v in r] for r in rate.to_numpy()]
+    text = [["no students" if k == 0 else SMALL if pd.isna(v) else f"{v:.0%}" for v, k in zip(rv, rk)]
+            for rv, rk in zip(rate.to_numpy(), n.to_numpy())]
+    # Group sizes only for shown cells, so a suppressed count never reaches the page.
+    sizes = [[None if v is None else int(k) for v, k in zip(rz, rk)] for rz, rk in zip(z, n.to_numpy())]
+    fig = go.Figure(go.Heatmap(z=z, x=intakes, y=modules, text=text, texttemplate="%{text}", textfont={"size": 13},
+                               customdata=sizes, colorscale=HEATMAP_SCALE, zmin=0, zmax=1,
+                               xgap=3, ygap=3, hoverongaps=False,
+                               colorbar={"title": {"text": "Observed rate"}, "tickformat": ".0%"},
+                               hovertemplate="Module %{y}, intake %{x}<br>Observed Fail or Withdrawn: %{text}"
+                                             "<br>n = %{customdata:,} students<extra></extra>"))
+    fig.update_layout(
+        title=HEATMAP_TITLE, height=CHART_HEIGHT, margin={"t": 90}, xaxis_title="Intake (presentation)",
+        yaxis_title="Module", xaxis={"type": "category", "showgrid": False},
+        yaxis={"type": "category", "autorange": "reversed", "showgrid": False},
+        annotations=[{"x": p, "y": m, "text": t, "showarrow": False, "font": {"color": MUTED, "size": 12}}
+                     for m, row_text, row_z in zip(modules, text, z) for p, t, v in zip(intakes, row_text, row_z)
+                     if v is None])
+    return fig
+
+
 def activity_chart(table: pd.DataFrame, pres: str, scope: str):
     shown = table[~table["suppressed"]]
     fig = go.Figure(go.Bar(x=shown["day_band"].astype(str).tolist(), y=shown["at_risk_rate"].tolist(),
@@ -876,6 +909,14 @@ def page_modules() -> None:
             show_chart(intake_chart(at_risk_by_presentation(matrix_l.value, one), scope))
             st.caption(f"Observed outcomes of each intake. {TEST_PRESENTATION} is the validation presentation. "
                        f"Intakes with fewer than {MIN_CELL} students are not shown.")
+    if matrix_l.ok:
+        with st.container(border=True, key="card-heatmap"):
+            show_chart(module_intake_heatmap(at_risk_by_module_and_presentation(matrix_l.value)))
+            st.caption(f"Observed outcomes, not model predictions: the share of each module's Day {CUTOFF_DAY} "
+                       f"population whose final result was Fail or Withdrawn, all modules and intakes. "
+                       f"{TEST_PRESENTATION} is the validation presentation. Cells with fewer than {MIN_CELL} "
+                       f"students are not shown ({SMALL}); \"no students\" marks a module that did not run in that "
+                       "intake. Hover over a cell for its number of students.")
 
     left, right = st.columns(2)
     if matrix_l.ok:

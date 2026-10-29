@@ -256,6 +256,19 @@ def at_risk_by_presentation(matrix: pd.DataFrame, module: str | None = None) -> 
     return _rates(part.groupby("code_presentation")).sort_values("code_presentation").reset_index(drop=True)
 
 
+def at_risk_by_module_and_presentation(matrix: pd.DataFrame) -> pd.DataFrame:
+    """Observed at-risk (Fail or Withdrawn) rate for every module and presentation (intake) of the matrix, from
+    final outcomes, not model scores. Every pair is listed, modules then presentations in order; a module that
+    did not run in a presentation has zero students. Pairs under MIN_CELL students are suppressed (NaN rate)."""
+    grid = pd.MultiIndex.from_product([sorted(matrix["code_module"].unique()),
+                                       sorted(matrix["code_presentation"].unique())],
+                                      names=["code_module", "code_presentation"])
+    out = _rates(matrix.groupby(["code_module", "code_presentation"])).set_index(grid.names).reindex(grid)
+    out["students"] = out["students"].fillna(0).astype(int)
+    out["suppressed"] = out["students"] < MIN_CELL
+    return out.reset_index()
+
+
 def at_risk_by_activity(matrix: pd.DataFrame, presentation: str, module: str | None = None) -> pd.DataFrame:
     """Observed at-risk rate by days active by Day 30, in the DAY_BANDS buckets (0, 1-5, ..., 21+), for one
     presentation and one module or all. Every bucket is listed, with zero students where none fall in it."""
