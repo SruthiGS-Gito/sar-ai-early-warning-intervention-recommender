@@ -490,7 +490,7 @@ Contributions below follow the Review 1 sprint scope (`docs/review1_scope.md`) a
 - Review 1 tasks: engagement metrics up to Day 30 (107), consecutive inactive days (108), engagement-by-outcome charts (116) and withdrawal timing analysis (204).
 - Repository: the engagement profile notebook (`Engagement profile charts and export.ipynb`), which clusters Day 30 engagement with KMeans and compares cluster counts by silhouette and inertia, and an engagement clustering section added to `student_academic_risk.ipynb`.
 
-**Midhula M**
+**Midhula M S**
 - Review 1 tasks: target definition and Day 30 population (111), assessment features (211) and the baseline logistic regression model (112).
 - Repository: the Random Forest and XGBoost tuning notebook (`xgboost-random-forest (2).ipynb`, with a later version `xgboost-random-forest (4).ipynb`), which compares both models with the baseline, selects the Random Forest and tunes the hyperparameters used in the final model, together with its description in `notebooks/README.md`.
 
