@@ -10,7 +10,7 @@ Rules:
 
 ## XGBoost and Random Forest notebooks
 
-Both notebooks are by Midhula M. Their file names do not follow the `<ticket>_<initials>_<topic>` convention; they are kept unchanged because the documentation cites them.
+Both notebooks are by Midhula M S. Their file names do not follow the `<ticket>_<initials>_<topic>` convention; they are kept unchanged because the documentation cites them.
 
 - `xgboost-random-forest (2).ipynb`: model training, hyperparameter tuning and model comparison for the at-risk prediction task. It compares Random Forest and XGBoost with the logistic regression baseline on the Day 30 feature matrix, and its tuned Random Forest settings are the ones used by the final model.
 - `xgboost-random-forest (4).ipynb`: a later version of the same notebook, which adds a threshold check, the data-leakage checklist and an evaluation of the selected model.

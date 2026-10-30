@@ -4,7 +4,7 @@
 
 Submitted as part of the AI/ML Internship, TrackGenesis (ICT Academy of Kerala)
 
-Team 8: Sruthi G S, Ancy Michael, Abhijith M S, Gouri M, Midhula M
+Team 8: Sruthi G S, Ancy Michael, Abhijith M S, Gouri M, Midhula M S
 
 Submission date: 30 October 2026
 
@@ -171,7 +171,7 @@ The calibrator and every cutoff come from out-of-fold scores on the training pre
 
 **Logistic regression baseline.** The Review 1 baseline is a logistic regression on 30 inputs (the 24 final inputs and the six protected characteristics). On 2014J it reaches ROC-AUC 0.733 and PR-AUC 0.625.
 
-**Random Forest and XGBoost.** The comparison of tree models was carried out in the tuning notebook contributed by Midhula M (`notebooks/xgboost-random-forest (2).ipynb`, with a later version in `notebooks/xgboost-random-forest (4).ipynb`). On the same split and 30 inputs, at a threshold of 0.5 on 2014J, the notebook reports:
+**Random Forest and XGBoost.** The comparison of tree models was carried out in the tuning notebook contributed by Midhula M S (`notebooks/xgboost-random-forest (2).ipynb`, with a later version in `notebooks/xgboost-random-forest (4).ipynb`). On the same split and 30 inputs, at a threshold of 0.5 on 2014J, the notebook reports:
 
 | Model | Recall | Precision | PR-AUC | ROC-AUC |
 |---|---:|---:|---:|---:|
@@ -346,7 +346,7 @@ The 24 inputs fall into three explanation groups. Behaviour inputs (activity, in
 | Weekly check-ins | site activity, inactivity, missed work, late work |
 | Financial aid referral | registration timing, credits studied |
 
-A support type's match score is the sum of weight times contribution over the inputs that raise the student's score, and the top three are suggested. Financial aid referral is matched from workload and registration timing only, never from the deprivation band. On 2014J at 20% capacity, weekly check-ins are the primary suggestion for 1,211 of the 1,841 flagged students (66%), because many engagement inputs map to them.
+A support type's match score is the sum of weight times contribution over the inputs that raise the student's score, and the top three are suggested. Financial aid referral is matched from workload and registration timing only, never from the deprivation band. On 2014J at 20% capacity, weekly check-ins are the primary suggestion for 1,211 of the 1,841 flagged students (66%), because many engagement inputs map to them. Tutoring is the primary suggestion for 617 (34%) and peer tutoring for 13 (1%). Mentoring and financial aid referral are the primary suggestion for none, because the weights rank weekly check-ins and tutoring higher for the inputs that drive these students' scores.
 
 **Similar students.** Each suggestion is shown with context from the 50 most similar students of the same module in the training presentations, matched on Day 30 activity, assessment and study-load inputs. The application shows how many of them ended at risk or on track, and hides any group of fewer than 10 students. The pool refuses 2014J, so a validation student's outcome can never reach a suggestion.
 
@@ -405,7 +405,7 @@ The at-risk rate is attached after clustering and plays no part in it. The profi
 
 ## 3.11 The Application
 
-The Streamlit application is organised around a tutor's workflow: see who to contact first, understand one student, then look at the cohort. It serves on the local machine only, because it shows individual student records.
+The Streamlit application is organised around a tutor's workflow: see who to contact first, understand one student, then look at the cohort. It runs on the local machine, because it shows individual student records. A password-protected hosted copy was also deployed for demonstration. The student-level files it needs are kept in a separate private repository and are not part of the project repository. Access is given on request.
 
 | Page | What it shows |
 |---|---|
@@ -435,7 +435,7 @@ The Streamlit application is organised around a tutor's workflow: see who to con
 
 ## 3.12 Testing and Reproducibility
 
-**Tests.** The suite has 211 tests in 24 test files, and all 211 pass (run time 205.94 s). They cover:
+**Tests.** The suite has 238 tests in 26 test files, and all 238 pass (run time 127.00 s). They cover:
 
 - data loading, cleaning, the target and the Day 30 population;
 - the engagement, assessment and registration features, including the leakage tests;
@@ -494,7 +494,7 @@ Contributions below follow the Review 1 sprint scope (`docs/review1_scope.md`) a
 - Review 1 tasks: target definition and Day 30 population (111), assessment features (211) and the baseline logistic regression model (112).
 - Repository: the Random Forest and XGBoost tuning notebook (`xgboost-random-forest (2).ipynb`, with a later version `xgboost-random-forest (4).ipynb`), which compares both models with the baseline, selects the Random Forest and tunes the hyperparameters used in the final model, together with its description in `notebooks/README.md`.
 
-**Integration after Review 1.** After Review 1, the remaining integration was completed by Sruthi G S with the agreement of the team: the final model, calibration, explanations, recommender, team tables, application, tests and documentation. Teammates' notebooks served as references for this work: the Random Forest and XGBoost tuning notebook (Midhula M) for the model choice and hyperparameters; the retention funnel analysis in notebook 206 (Ancy Michael) for the funnel stages; the engagement profile notebook (Gouri M) for the profile features and the range of cluster counts; and the data notebook `student_academic_risk.ipynb` (Abhijith M S and Gouri M) for the data preparation steps.
+**Integration after Review 1.** After Review 1, the remaining integration was completed by Sruthi G S with the agreement of the team: the final model, calibration, explanations, recommender, team tables, application, tests and documentation. Teammates' notebooks served as references for this work: the Random Forest and XGBoost tuning notebook (Midhula M S) for the model choice and hyperparameters; the retention funnel analysis in notebook 206 (Ancy Michael) for the funnel stages; the engagement profile notebook (Gouri M) for the profile features and the range of cluster counts; and the data notebook `student_academic_risk.ipynb` (Abhijith M S and Gouri M) for the data preparation steps.
 
 # 5. PROJECT LINK AND REFERENCES
 
@@ -506,7 +506,7 @@ Contributions below follow the Review 1 sprint scope (`docs/review1_scope.md`) a
 
 | Library | Requirement | Recorded in the final model run |
 |---|---|---|
-| Python | 3.10 or later (`pyproject.toml`) | 3.12.10 |
+| Python | 3.12 or later (`pyproject.toml`) | 3.12.10 |
 | pandas | 2.0 or later | 3.0.6 |
 | NumPy | 1.24 or later | 2.5.3 |
 | scikit-learn | 1.3 or later | 1.9.1 |
@@ -522,12 +522,13 @@ Contributions below follow the Review 1 sprint scope (`docs/review1_scope.md`) a
 
 ## 6.1 Conclusion
 
-The project delivers a Day 30 early warning system for OULAD that is leakage-safe, calibrated and organised around a support team's capacity. On the 2014J validation presentation, the final Random Forest reaches ROC-AUC 0.766 (95% interval 0.756 to 0.776) and PR-AUC 0.721 without any protected characteristic as input. Flagging the highest-risk 20% of the cohort gives a list in which eight in ten students go on to fail or withdraw, reaching 39% of all at-risk students. Each flag comes with a band, a plain-language reason and a rule-based support suggestion, and the application presents the results at student, module and cohort level. The work is reproducible from a fresh clone and covered by 211 automated tests.
+The project delivers a Day 30 early warning system for OULAD that is leakage-safe, calibrated and organised around a support team's capacity. On the 2014J validation presentation, the final Random Forest reaches ROC-AUC 0.766 (95% interval 0.756 to 0.776) and PR-AUC 0.721 without any protected characteristic as input. Flagging the highest-risk 20% of the cohort gives a list in which eight in ten students go on to fail or withdraw, reaching 39% of all at-risk students. Each flag comes with a band, a plain-language reason and a rule-based support suggestion, and the application presents the results at student, module and cohort level. The work is reproducible from a fresh clone and covered by 238 automated tests.
 
 ## 6.2 Limitations
 
 - **Validation set.** 2014J is a validation presentation and served earlier to compare model configurations. Its figures may therefore be slightly optimistic. The leave-one-presentation-out results show the spread across presentations.
 - **Rule-based recommender.** OULAD records no interventions, so the support mapping is an assumption and the effect of any support is unknown.
+- **Unused support types.** On 2014J at 20% capacity, mentoring and financial aid referral are the primary suggestion for none of the 1,841 flagged students. The weights are assumptions set by the team, and no intervention data exists to test or tune them.
 - **Group recall gaps.** At the same cutoff, recall is lower for women than for men and for students aged 35 to 55 than for younger students, with intervals that exclude zero.
 - **Missing early scores.** In EEE and GGG no assessment is due by Day 30, so the model has no early score for most of these students.
 - **Calibration across all modules.** The calibrator is fitted on all modules together, so a calibrated score can be higher or lower than the observed rate within a single module.
