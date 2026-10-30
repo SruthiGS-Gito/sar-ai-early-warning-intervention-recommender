@@ -1,6 +1,9 @@
-pandas>=2.0
-numpy>=1.24
-scikit-learn>=1.3
+# Python 3.12 or later (pyproject.toml): shap 0.54.1 and numpy 2.5.3 require it.
+# scikit-learn, pandas and numpy are pinned to the versions recorded in models/final/config.json,
+# the versions the final model was trained and saved with.
+pandas==3.0.6
+numpy==2.5.3
+scikit-learn==1.9.1
 matplotlib>=3.7
 plotly==7.1.0
 pyarrow>=14.0

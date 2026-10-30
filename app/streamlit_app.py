@@ -45,6 +45,7 @@ from sar.explain.shap_explain import (  # noqa: E402
 from sar.recommend.interventions import INTERVENTIONS  # noqa: E402
 from sar.recommend.neighbours import NeighbourPool  # noqa: E402
 from sar.recommend.recommender import NOTE, recommend  # noqa: E402
+from sar.rounding import fixed, round_half_up  # noqa: E402
 from sar.service.data import (  # noqa: E402
     OPTIONAL_TABLES,
     SHAP_PREFIX,
@@ -60,6 +61,7 @@ from sar.service.figures import band_figure, hidden_bands  # noqa: E402
 from sar.service.priority import (  # noqa: E402
     NO_LOW_SUGGESTION,
     NO_SUPPORT,
+    NOT_A_TYPE,
     chart_factors,
     for_reasons,
     never_first,
@@ -68,6 +70,7 @@ from sar.service.priority import (  # noqa: E402
     reason_counts,
     selected_row,
     short_reason,
+    shown_suggestions,
     similar_definition,
     snapshot,
     support_counts,
@@ -78,6 +81,7 @@ from sar.service.views import (  # noqa: E402
     KEY,
     MIN_CELL,
     at_risk_by_activity,
+    at_risk_by_module_and_presentation,
     at_risk_by_presentation,
     band_outcome,
     band_evidence,
@@ -90,6 +94,7 @@ from sar.service.views import (  # noqa: E402
     example_student,
     is_training_presentation,
     module_rank,
+    priority_export,
     risk_band_edges,
     risk_band_table,
     score_presentation,
@@ -119,9 +124,10 @@ STYLE = """<style>
 .pill-info {color: #b9b2ff; background: rgba(124,108,255,0.16);}
 [class*="st-key-card-kpi"] [data-testid="stMetricValue"] {font-size: 2rem;}
 [class*="st-key-card-"] [data-testid="stMetric"] {padding: 0;}
-[class*="st-key-card-kpi"] {min-height: 11rem;}
-[class*="st-key-card-module"] {min-height: 9.5rem;}
-[class*="st-key-card-ind"] {min-height: 8.5rem;}
+[data-testid="stColumn"] > [data-testid="stVerticalBlock"] > [data-testid="stLayoutWrapper"]:last-child:has(> [class*="st-key-card-"]) {
+    flex: 1 1 auto;}
+[data-testid="stColumn"] > [data-testid="stVerticalBlock"] > [data-testid="stLayoutWrapper"]:last-child > [class*="st-key-card-"] {
+    height: 100%; justify-content: flex-start;}
 .kbar {height: 6px; border-radius: 3px; background: rgba(154,163,199,0.18); overflow: hidden; margin-top: 0.4rem;}
 .kbar span {display: block; height: 100%; background: linear-gradient(90deg, #4f8cff, #7c6cff);}
 .kbar.empty {background: transparent;}
@@ -141,13 +147,16 @@ STYLE = """<style>
 .st-key-nav [role="radiogroup"] label:hover {background: rgba(124,108,255,0.12);}
 </style>"""
 CHART_HEIGHT = 380
+# Legends sit in a column to the right of the plot, top-aligned: Plotly widens the right margin to fit them, so a
+# legend never runs into the title, however narrow the card.
+LEGEND = {"orientation": "v", "x": 1.02, "xanchor": "left", "y": 1, "yanchor": "top"}
 pio.templates["sar_dark"] = go.layout.Template(layout=go.Layout(
     paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=CHART_HEIGHT,
     font={"color": TEXT, "family": "Inter, Segoe UI, sans-serif", "size": 13}, title={"font": {"size": 15}},
     colorway=[ACCENT, ACCENT_2, BAND_COLOURS["Low"], BAND_COLOURS["Medium"], BAND_COLOURS["High"]],
     xaxis={"gridcolor": GRID, "zerolinecolor": GRID, "linecolor": GRID},
     yaxis={"gridcolor": GRID, "zerolinecolor": GRID, "linecolor": GRID},
-    legend={"bgcolor": "rgba(0,0,0,0)", "orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
+    legend={"bgcolor": "rgba(0,0,0,0)", **LEGEND},
     margin={"t": 80}, hoverlabel={"bgcolor": "#131a33", "font": {"color": TEXT}}))
 pio.templates.default = "plotly_dark+sar_dark"
 BAND_HELP = ("Risk bands come from the calibrated risk score: Low below the wide-net cutoff ({medium:.2f}), "
@@ -195,7 +204,8 @@ SUPPORT_NOTE = ("Suggestions are rule-based: they match the model's risk drivers
 NOT_SHOWN = "Not shown"
 NOT_YET = "Not available yet"
 IN_SAMPLE_HELP = "In-sample scores are optimistic and not informative."
-DISCLAIMER = "This is a model prediction. It supports, and does not replace, professional judgment."
+DISCLAIMER = "The risk band comes from a model and supports, and does not replace, professional judgment."
+RING_NOTE = "The percentage is the observed rate for students in this band, not a prediction for this student."
 WRAP = 30  # characters per line of a factor label
 MAX_LIVE_REASONS = 50
 OPEN_FOR_DETAILS = "Open the student to see"
@@ -204,6 +214,8 @@ WHY_LEGEND = ("Red bars raise the risk score and teal bars lower it. A longer ba
               "are in the table below.")
 PSEUDONYM_NOTE = "Student IDs are the pseudonymised identifiers published with OULAD."
 DESCRIPTIVE = "Similar past students are descriptive, not evidence of effectiveness"
+MAIN_VS_SUPPORT = ("The main reason is the single input that raises the score most, while the suggested support is "
+                   "the type that best matches the student's drivers overall, so its reason can differ.")
 CALIBRATION_NOTE = ("Each point is a bin of {val} students by calibrated score (width 0.1): its mean calibrated score "
                     "against the share who went on to fail or withdraw, with the number of students beside it. Points "
                     "on the diagonal are well calibrated. Band cutoffs: Medium from {medium:.2f}, High from "
@@ -282,11 +294,13 @@ def get_explanation(models_dir: str, presentation: str, module: str, student: in
 
 @st.cache_data(show_spinner="Preparing reasons and suggestions...")
 def get_details(models_dir: str, presentation: str, keys: pd.DataFrame, _fitted, _config, _matrix) -> pd.DataFrame:
-    """Main reason and suggested support for the students in `keys` (key columns, in list order). Uses the
+    """Main reason, suggested support and its reason for the students in `keys` (key columns and risk band, in
+    list order); the Low-band rule applies to the suggested support. Uses the
     precomputed explanations when present; otherwise explains at most MAX_LIVE_REASONS students, the
     top of the list, and marks the rest to be opened one at a time."""
     features = _fitted["features"]
-    out = keys.reset_index(drop=True).assign(main_reason=OPEN_FOR_DETAILS, suggested_support=OPEN_FOR_DETAILS)
+    out = keys.reset_index(drop=True).assign(main_reason=OPEN_FOR_DETAILS, suggested_support=OPEN_FOR_DETAILS,
+                                             support_reason=OPEN_FOR_DETAILS)
     rows = out[KEY].merge(_matrix, on=KEY, how="left")
     stored = get_shap_cache(models_dir, presentation, _config)
     if stored.ok:
@@ -303,8 +317,9 @@ def get_details(models_dir: str, presentation: str, keys: pd.DataFrame, _fitted,
                    if len(live) else pd.DataFrame(columns=features))
     out = out.assign(main_factor=None, prepared=known)
     if known.any():
-        details = priority_details(rows.loc[known, features], contrib.set_axis(rows.index[known]))
-        cols = ["main_factor", "main_reason", "suggested_support"]
+        details = priority_details(rows.loc[known, features], contrib.set_axis(rows.index[known]),
+                                   out.loc[known, "band"])
+        cols = ["main_factor", "main_reason", "suggested_support", "support_reason"]
         out.loc[known, cols] = details[cols].values
     return out
 
@@ -435,9 +450,8 @@ def band_pill(band: str) -> str:
 
 def show_chart(fig) -> None:
     """Every chart uses the app's dark Plotly template rather than Streamlit's chart theme, with transparent
-    backgrounds so the card shows through, and the legend in a row above the plot."""
-    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0})
+    backgrounds so the card shows through, and the legend in a column to the right of the plot (LEGEND)."""
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", legend=LEGEND)
     st.plotly_chart(fig, width="stretch", theme=None)
 
 
@@ -504,7 +518,8 @@ def open_selected() -> None:
 
 
 def number(v: float) -> str:
-    return f"{v:,.0f}" if float(v).is_integer() else f"{v:,.1f}"
+    """An indicator value or module median: a whole number, or one decimal, rounded half up."""
+    return fixed(v, 0 if float(v).is_integer() else 1, grouping=True)
 
 
 def why_chart(raising: pd.DataFrame, lowering: pd.DataFrame):
@@ -518,7 +533,8 @@ def why_chart(raising: pd.DataFrame, lowering: pd.DataFrame):
         fig.add_trace(go.Bar(x=top.loc[part, "contribution"].tolist(),
                              y=[lab for lab, p in zip(labels, part) if p], orientation="h", name=name,
                              marker_color=colour, customdata=top.loc[part, "phrase"].tolist(),
-                             hovertemplate="%{customdata}: %{x:+.3f}<extra></extra>"))
+                             hovertext=[fixed(x, 3, sign=True) for x in top.loc[part, "contribution"]],
+                             hovertemplate="%{customdata}: %{hovertext}<extra></extra>"))
     fig.update_layout(title="What moves this score", height=CHART_HEIGHT, margin={"t": 90, "l": 10, "r": 10},
                       xaxis_title=SHAP_SCALE,
                       yaxis={"automargin": True, "categoryorder": "array", "categoryarray": labels})
@@ -554,17 +570,19 @@ def student_header(sid: int, module: str, pres: str, me: pd.Series, rank: int, n
         who.markdown(band_pill(band) + f"&nbsp; ranked {rank:,} of {n_module:,} in module"
                      + (" (in-sample)" if ctl.in_sample else ""), unsafe_allow_html=True,
                      help=BAND_HELP.format(**{k.lower(): v for k, v in edges.items()}))
+        has_ring = False
         if ctl.in_sample:
             note.caption(IN_SAMPLE_NOTE)
         else:
             scored = get_scores(processed, models, TEST_PRESENTATION, fitted, matrix)
             rate, n, scope = band_outcome(scored, module, band)
             if n:
+                has_ring = True
                 with ring:
                     show_chart(ring_chart(rate, band))
                 note.markdown("**Observed outcome for this band**", help=RING_HELP)
                 note.caption(band_outcome_text(band, module, rate, n, scope))
-        note.caption(DISCLAIMER)
+        note.caption(f"{DISCLAIMER} {RING_NOTE}" if has_ring else DISCLAIMER)
 
 
 def indicator_cards(pres: str, module: str, sid: int) -> None:
@@ -612,26 +630,27 @@ def primary_card(expl, rec, where: str) -> None:
 
 
 def support_cards(expl, rec) -> None:
-    """The primary suggestion; the other matched types under "Other options" (for a Low-band student, the
-    rule-based matches under their own expander); and, once, how the similar-student group is built and the
-    note that suggestions are rule-based and descriptive."""
+    """Every suggestion shown directly: the primary card, then one card per other suggestion tagged Also
+    consider (sar.service.priority.shown_suggestions applies the Low-band rule); and, once, how the
+    similar-student group is built and the note that suggestions are rule-based and descriptive."""
     primary_card(expl, rec, "support")
-    first = primary_for(rec)
-    others = [s for s in rec.suggestions if s is not first]
-    if others:
-        with st.expander("Rule-based suggestions" if rec.optional else "Other options"):
-            for s in others:
-                st.markdown(f'<span class="pill pill-info">Also consider</span>&nbsp; **{s.label}**: '
-                            + support_line(expl, s), unsafe_allow_html=True)
+    for i, s in enumerate(shown_suggestions(rec)[1:], start=1):
+        with st.container(border=True, key=f"card-also-{i}"):
+            st.markdown(f'<span class="pill pill-info">Also consider</span>&nbsp; **{s.label}**',
+                        unsafe_allow_html=True)
+            st.write(support_line(expl, s))
     with st.expander("About these suggestions"):
+        st.caption(MAIN_VS_SUPPORT)
         st.caption(similar_definition(rec.neighbours))
         st.caption(f"{DESCRIPTIVE}. {NOTE}")
 
 
 def inputs_table(expl) -> pd.DataFrame:
-    """Every input with its value and its change in the raw forest score, to three decimals."""
+    """Every input with its value and the model's own SHAP value (change in the raw forest score), rounded once
+    to three decimals. `expl` is the model's explanation, not the copy for_reasons adjusts, so a weighted score
+    that carries no weight keeps its value here."""
     table = explanation_table(expl)
-    table["Change in score"] = [f"{v:+.3f}" for v in table["Change in score"]]
+    table["Change in score"] = [fixed(v, 3, sign=True) for v in table["Change in score"]]
     table["Group"] = table["Group"].map(GROUP_NAMES).fillna(table["Group"])
     return table.rename(columns={"Change in score": "Change in raw forest score"})
 
@@ -663,10 +682,10 @@ def student_view(pres: str, module: str, sid: int) -> None:
         with st.container(border=True, key="card-why"):
             show_chart(why_chart(raising, lowering))
             st.caption(WHY_LEGEND)
-            st.caption(f"Calibrated model score {float(me['score']):.2f}, calibrated across all modules.")
+            st.caption(f"Calibrated model score {fixed(me['score'], 2)}, calibrated across all modules.")
         with st.expander("In words, and all inputs"):
             st.write(shown.sentence)
-            st.dataframe(inputs_table(shown), hide_index=True)
+            st.dataframe(inputs_table(expl), hide_index=True)
     with support:
         if rec is None:
             st.info(pool_l.message)
@@ -741,6 +760,38 @@ def intake_chart(table: pd.DataFrame, scope: str):
                       yaxis_title="Observed at-risk rate", xaxis_title="Presentation", margin={"t": 90},
                       xaxis={"categoryorder": "array", "categoryarray": shown["code_presentation"].tolist()},
                       height=CHART_HEIGHT)
+    return fig
+
+
+HEATMAP_TITLE = "Observed Fail or Withdrawn rate by module and intake (outcomes, not predictions)"
+# Navy to violet: no band colour, so no cell reads as a risk band.
+HEATMAP_SCALE = [[0.0, "#16203f"], [0.4, "#4f8cff"], [0.7, "#7c6cff"], [1.0, "#c084fc"]]
+
+
+def module_intake_heatmap(table: pd.DataFrame):
+    """Observed rate per module (rows) and intake (columns), printed in each cell; group size on hover.
+    Suppressed cells are left empty and labelled n < MIN_CELL, or "no students" where the module did not run."""
+    rate = table.pivot(index="code_module", columns="code_presentation", values="at_risk_rate")
+    n = table.pivot(index="code_module", columns="code_presentation", values="students").loc[rate.index, rate.columns]
+    modules, intakes = rate.index.tolist(), rate.columns.tolist()
+    z = [[None if pd.isna(v) else float(v) for v in r] for r in rate.to_numpy()]
+    text = [["no students" if k == 0 else SMALL if pd.isna(v) else f"{v:.0%}" for v, k in zip(rv, rk)]
+            for rv, rk in zip(rate.to_numpy(), n.to_numpy())]
+    # Group sizes only for shown cells, so a suppressed count never reaches the page.
+    sizes = [[None if v is None else int(k) for v, k in zip(rz, rk)] for rz, rk in zip(z, n.to_numpy())]
+    fig = go.Figure(go.Heatmap(z=z, x=intakes, y=modules, text=text, texttemplate="%{text}", textfont={"size": 13},
+                               customdata=sizes, colorscale=HEATMAP_SCALE, zmin=0, zmax=1,
+                               xgap=3, ygap=3, hoverongaps=False,
+                               colorbar={"title": {"text": "Observed rate"}, "tickformat": ".0%"},
+                               hovertemplate="Module %{y}, intake %{x}<br>Observed Fail or Withdrawn: %{text}"
+                                             "<br>n = %{customdata:,} students<extra></extra>"))
+    fig.update_layout(
+        title=HEATMAP_TITLE, height=CHART_HEIGHT, margin={"t": 90}, xaxis_title="Intake (presentation)",
+        yaxis_title="Module", xaxis={"type": "category", "showgrid": False},
+        yaxis={"type": "category", "autorange": "reversed", "showgrid": False},
+        annotations=[{"x": p, "y": m, "text": t, "showarrow": False, "font": {"color": MUTED, "size": 12}}
+                     for m, row_text, row_z in zip(modules, text, z) for p, t, v in zip(intakes, row_text, row_z)
+                     if v is None])
     return fig
 
 
@@ -876,6 +927,14 @@ def page_modules() -> None:
             show_chart(intake_chart(at_risk_by_presentation(matrix_l.value, one), scope))
             st.caption(f"Observed outcomes of each intake. {TEST_PRESENTATION} is the validation presentation. "
                        f"Intakes with fewer than {MIN_CELL} students are not shown.")
+    if matrix_l.ok:
+        with st.container(border=True, key="card-heatmap"):
+            show_chart(module_intake_heatmap(at_risk_by_module_and_presentation(matrix_l.value)))
+            st.caption(f"Observed outcomes, not model predictions: the share of each module's Day {CUTOFF_DAY} "
+                       f"population whose final result was Fail or Withdrawn, all modules and intakes. "
+                       f"{TEST_PRESENTATION} is the validation presentation. Cells with fewer than {MIN_CELL} "
+                       f"students are not shown ({SMALL}); \"no students\" marks a module that did not run in that "
+                       "intake. Hover over a cell for its number of students.")
 
     left, right = st.columns(2)
     if matrix_l.ok:
@@ -1014,7 +1073,8 @@ def flag_state(c: View) -> FlagState:
     scored = scored.assign(flagged=flagging.flagged)
     in_view = scored if c.module == ALL_MODULES else scored[scored["code_module"] == c.module]
     flagged = in_view[in_view["flagged"]].sort_values("rank")
-    details = (get_details(models, c.presentation, flagged[KEY].reset_index(drop=True), fitted, final.config, matrix)
+    details = (get_details(models, c.presentation, flagged[KEY + ["band"]].reset_index(drop=True), fitted, final.config,
+                           matrix)
                if len(flagged) else None)
     return FlagState(scored, in_view, flag_outcome(in_view, in_view["flagged"]), flagged, details)
 
@@ -1063,7 +1123,7 @@ def reasons_chart(counts: pd.Series, flagged: int):
 def day30_snapshots(students: pd.DataFrame) -> list[str]:
     """One short line of Day 30 facts per student, from the feature matrix, in the order of `students`."""
     rows = students[KEY].merge(matrix[KEY + ["active_days", "n_missed", "n_submitted"]], on=KEY, how="left")
-    return [f"{a:.0f} active day{'' if a == 1 else 's'}, {m:.0f} missed, {n:.0f} submitted"
+    return [f"{fixed(a)} active day{'' if round_half_up(a) == 1 else 's'}, {fixed(m)} missed, {fixed(n)} submitted"
             for a, m, n in zip(rows["active_days"], rows["n_missed"], rows["n_submitted"])]
 
 
@@ -1102,7 +1162,7 @@ def review_table(fs: FlagState, pres: str) -> None:
     if not details["prepared"].all():
         st.caption(f"Reasons and suggestions are prepared for the first {MAX_LIVE_REASONS} students listed.")
     st.caption("Select a row to open the student. " + PSEUDONYM_NOTE)
-    export = listing.assign(score_source=score_source(pres))
+    export = priority_export(listing, fs.flagged["score"], score_source(pres), details["support_reason"])
     st.download_button("Download the list (CSV)", export.to_csv(index=False),
                        file_name=f"priority_{pres}{'_in_sample' if ctl.in_sample else ''}.csv", mime="text/csv")
 
@@ -1210,7 +1270,7 @@ def page_support() -> None:
     flagged = int(counts.sum())
     st.caption(f"{rule_caption(ctl)} {flagged:,} flagged students, counted by the support type suggested first "
                "for each.")
-    top = counts.drop(NO_SUPPORT).idxmax()
+    top = counts.drop(list(NOT_A_TYPE)).idxmax()
     if counts[top] > flagged / 2:
         st.markdown(f"Most flagged students ({counts[top] / flagged:.0%}) share the same primary suggestion, {top}, "
                     "because the rules map a small set of Day 30 drivers to a few support types.")
@@ -1227,9 +1287,13 @@ def page_support() -> None:
     if counts[NO_SUPPORT]:
         st.caption(f"{counts[NO_SUPPORT]:,} flagged students have no input that raises the score noticeably, so no "
                    "support type is matched.")
+    if counts[NO_LOW_SUGGESTION]:
+        st.caption(f"{counts[NO_LOW_SUGGESTION]:,} flagged Low-band students have no specific support suggested at "
+                   f"Day {CUTOFF_DAY}: their first suggestion does not come from a missed assessment or a spell "
+                   "without activity.")
     left, right = st.columns(2)
     with left.container(border=True, key="card-support-counts"):
-        show_chart(support_bar_chart(counts.drop(NO_SUPPORT)))
+        show_chart(support_bar_chart(counts.drop(list(NOT_A_TYPE))))
     by_module = pd.crosstab(fs.flagged["code_module"].to_numpy(), fs.details["suggested_support"].to_numpy())
     by_module = by_module.reindex(columns=[INTERVENTIONS[n][0] for n in INTERVENTIONS], fill_value=0)
     with right.container(border=True, key="card-support-modules"):

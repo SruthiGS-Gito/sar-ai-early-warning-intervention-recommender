@@ -16,6 +16,7 @@ Groups
 import math
 
 from sar.config import CUTOFF_DAY, PROTECTED_FEATURES
+from sar.rounding import fixed, round_half_up
 
 BACKGROUND = PROTECTED_FEATURES
 COURSE = ("code_module", "n_assessments_due")
@@ -58,8 +59,8 @@ def _missing(v) -> bool:
 
 
 def _n(v, one: str, many: str | None = None) -> str:
-    """'no days', '1 day', '3 days', '1,204 clicks'."""
-    v = round(float(v))
+    """'no days', '1 day', '3 days', '1,204 clicks'. Rounded half up (sar.rounding)."""
+    v = round_half_up(v)
     word = one if v == 1 else (many or one + "s")
     return f"{v:,} {word}" if v else f"no {word}"
 
@@ -67,7 +68,7 @@ def _n(v, one: str, many: str | None = None) -> str:
 def _signed(v, unit: str, up: str, down: str, same: str) -> str:
     """`up`/`down` hold one {} for the size of the change, e.g. 'scores up by {}'."""
     v = float(v)
-    if round(v) == 0:
+    if round_half_up(v) == 0:
         return same
     return (up if v > 0 else down).format(_n(abs(v), unit))
 
@@ -77,7 +78,7 @@ def _first_active(v, c):
         return f"no activity on the course site by Day {c}"
     if v < 0:
         return f"first active {_n(-v, 'day')} before the module started"
-    return f"first active on day {v:.0f}"
+    return f"first active on day {fixed(v)}"
 
 
 def _reg_lead(v):
@@ -88,7 +89,7 @@ def _reg_lead(v):
 _P = {
     "total_clicks": lambda v, c: f"{_n(v, 'click')} on the course site by Day {c}",
     "active_days": lambda v, c: f"{_n(v, 'active day')} by Day {c}",
-    "avg_clicks_per_active_day": lambda v, c: (f"about {_n(v, 'click')} per active day" if round(v)
+    "avg_clicks_per_active_day": lambda v, c: (f"about {_n(v, 'click')} per active day" if round_half_up(v)
                                                else "no clicks on any active day"),
     "clicks_last_7d": lambda v, c: f"{_n(v, 'click')} in the last week before Day {c}",
     "clicks_prev_7d": lambda v, c: f"{_n(v, 'click')} in the week before that",
@@ -97,11 +98,11 @@ _P = {
                                         "no change in weekly clicks"),
     "first_active_day": _first_active,
     "max_consecutive_inactive_days": lambda v, c: (f"a longest run of {_n(v, 'day')} without activity"
-                                                   if round(v) else f"activity on every day up to Day {c}"),
+                                                   if round_half_up(v) else f"activity on every day up to Day {c}"),
     "trailing_inactive_days": lambda v, c: f"{_n(v, 'day')} without activity just before Day {c}",
     "n_submitted": lambda v, c: f"{_n(v, 'assessment')} submitted by Day {c}",
-    "mean_score": lambda v, c: f"an average score of {v:.0f}",
-    "weighted_score": lambda v, c: f"a weighted average score of {v:.0f}",
+    "mean_score": lambda v, c: f"an average score of {fixed(v)}",
+    "weighted_score": lambda v, c: f"a weighted average score of {fixed(v)}",
     "score_trend": lambda v, c: _signed(v, "point", "scores up by {}", "scores down by {}",
                                         "no change in score"),
     "mean_delay_days": lambda v, c: _signed(v, "day", "submitting {} late on average",

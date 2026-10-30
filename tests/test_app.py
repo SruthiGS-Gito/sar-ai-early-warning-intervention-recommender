@@ -202,7 +202,9 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
     tab = _tab(at, "Student")
     text = _texts(tab)
     assert f"### :material/person: Student {sid}" in text and f"Module **{module}** · Presentation 2014J" in text
-    assert "This is a model prediction. It supports, and does not replace, professional judgment." in text
+    assert "This is a model prediction" not in text
+    assert ("The risk band comes from a model and supports, and does not replace, professional judgment. The "
+            "percentage is the observed rate for students in this band, not a prediction for this student.") in text
     from sar.service import views
     scored = views.score_presentation(load_final_model(synthetic_env / "models").value.fitted, matrix, "2014J")
     me = scored[(scored["code_module"] == module) & (scored["id_student"] == sid)].iloc[0]
@@ -248,6 +250,32 @@ def test_student_view_shows_why_support_and_snapshot(synthetic_env, matrix):
         word = "Same as" if diff == 0 else "Above" if diff > 0 else "Below"
         assert f'pill-info">{word}</span>&nbsp; module median {r["median"]:,.0f}' in text
     assert "provisional" not in text.lower()
+    _assert_all_suggestions_shown(at, matrix, synthetic_env, module, sid, str(me["band"]))
+
+
+def _assert_all_suggestions_shown(at, matrix, env, module, sid, band):
+    """The Support tab lists every suggestion shown_suggestions allows, outside any expander: one Primary
+    card (also on the Overview tab), then one Also consider card per other suggestion, in order."""
+    from sar.data.split import make_split
+    from sar.explain.shap_explain import explain_student
+    from sar.recommend.neighbours import NeighbourPool
+    from sar.recommend.recommender import recommend
+    from sar.service.priority import for_reasons, shown_suggestions
+
+    fitted = load_final_model(env / "models").value.fitted
+    val = matrix[matrix["code_presentation"] == "2014J"]
+    row = val[(val["code_module"] == module) & (val["id_student"] == sid)].head(1)
+    shown = for_reasons(explain_student(fitted["model"], row[fitted["features"]], band=band))
+    expected = shown_suggestions(recommend(shown, row, NeighbourPool(make_split(matrix)[0])))
+    tab = at.main
+    text = _texts(tab)
+    labels = re.findall(r'Also consider</span>&nbsp; \*\*(.+?)\*\*', text)
+    assert labels == [s.label for s in expected[1:]]
+    if expected:
+        assert text.count(f'Primary</span>&nbsp; **{expected[0].label}**') == 2      # Overview and Support tabs
+    expanders = {e.label for e in tab.expander}
+    assert not {"Other options", "Rule-based suggestions"} & expanders and "About these suggestions" in expanders
+    return expected
 
 
 def test_flagging_rule_and_three_d_view_from_the_sidebar(synthetic_env):
@@ -286,6 +314,34 @@ def test_lookup_uses_precomputed_explanations_when_present(synthetic_env, matrix
     assert "Background characteristics are not model inputs." in _texts(at)
     listing = _listing(_go(at, "Overview")).value
     assert not (listing["Main reason"] == "Open the student to see").any()
+
+
+def test_all_inputs_table_shows_the_models_own_shap_values(synthetic_env, matrix):
+    """Every input, rounded once to three decimals from the model's SHAP value, including a weighted score that
+    carries no weight (the reasons give it none)."""
+    from sar.explain.chart import short_label
+
+    models = synthetic_env / "models"
+    loaded = load_final_model(models).value
+    features = loaded.fitted["features"]
+    changed = matrix.copy()                                   # the shared fixture stays unchanged
+    part = changed[changed["code_presentation"] == "2014J"]
+    i = part.index[part["mean_score"].notna()][0]
+    changed.loc[i, "weighted_score"] = float("nan")           # a weighted score that carries no weight
+    changed.to_csv(synthetic_env / "data" / "processed" / "day30_feature_matrix.csv", index=False)
+    part = changed[changed["code_presentation"] == "2014J"]
+    base, contrib, raw = explain_rows(loaded.fitted["model"], part[features])
+    save_shap_cache(models, "2014J", part[["code_module", "code_presentation", "id_student"]], contrib, raw, base,
+                    loaded.config)
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    _open_student(at, part.at[i, "code_module"], int(part.at[i, "id_student"]))
+    assert not at.exception
+    table = [df.value for df in at.dataframe if "Change in raw forest score" in df.value.columns][0]
+    shown = dict(zip(table["Input"], table["Change in raw forest score"]))
+    assert len(shown) == len(features)
+    for f in features:
+        assert shown[short_label(f)] == f"{contrib.at[i, f]:+.3f}", f
+    assert contrib.at[i, "weighted_score"] != 0
 
 
 def test_training_presentation_is_labelled(synthetic_env):
@@ -614,9 +670,12 @@ def test_example_buttons_choose_a_validation_student_in_the_band(synthetic_env, 
     text = _texts(at)
     assert f'">{band} risk</span>' in text and f"Module **{expected[0]}**" in text and "ranked " in text
     assert "Primary</span>" in text
-    expanders = [e.label for e in _tab(at, "Student").expander]
+    shown = _assert_all_suggestions_shown(_go(at, "Student"), matrix, synthetic_env, *expected, band)
     if band == "Low":
-        assert "Low risk: support is optional." in text and "Other options" not in expanders
+        assert "Low risk: support is optional." in text
+        from sar.service.priority import LOW_BAND_DRIVERS
+
+        assert all(s.drivers[0] in LOW_BAND_DRIVERS for s in shown)
     else:
         assert "support is optional" not in text
     at.button(key=f"example_{band.lower()}").click().run()          # same seed, same student
@@ -728,6 +787,49 @@ def test_modules_page_charts_come_from_observed_outcomes(tables_env, matrix):
     assert activity["text"] == [f"{r:.0%}<br>n = {n:,}" for r, n in zip(shown["at_risk_rate"], shown["students"])]
     funnel = [s for t, s in specs.items() if t.startswith("Students at each stage")][0]["data"][0]
     assert len(set(funnel["marker"]["color"])) > 1                         # blue-to-violet gradient
+    _assert_heatmap_matches(specs, views.at_risk_by_module_and_presentation(matrix))
+    assert "Observed outcomes, not model predictions" in _texts(at)
+
+
+HEATMAP = "Observed Fail or Withdrawn rate by module and intake (outcomes, not predictions)"
+
+
+def _assert_heatmap_matches(specs, table):
+    """The module-by-intake heatmap shows the service table: rate printed in shown cells, size on hover only
+    for shown cells, suppressed cells empty and labelled."""
+    heat = specs[HEATMAP]["data"][0]
+    assert heat["type"] == "heatmap" and heat["texttemplate"] == "%{text}" and (heat["zmin"], heat["zmax"]) == (0, 1)
+    assert heat["colorbar"]["tickformat"] == ".0%" and "%{customdata:,}" in heat["hovertemplate"]
+    assert not {c for _, c in heat["colorscale"]} & {"#ff5d73", "#ffb454", "#35d0ba"}   # never a band colour
+    assert heat["x"] == sorted(table["code_presentation"].unique()) and heat["y"] == sorted(table["code_module"].unique())
+    cells = table.set_index(["code_module", "code_presentation"])
+    labels = {(a["y"], a["x"]): a["text"] for a in specs[HEATMAP]["layout"].get("annotations", [])}
+    for i, module in enumerate(heat["y"]):
+        for j, intake in enumerate(heat["x"]):
+            cell = cells.loc[(module, intake)]
+            if cell["suppressed"]:
+                label = "no students" if cell["students"] == 0 else "n < 20"
+                assert heat["z"][i][j] is None and heat["customdata"][i][j] is None
+                assert heat["text"][i][j] == labels[(module, intake)] == label
+            else:
+                assert heat["z"][i][j] == pytest.approx(cell["at_risk_rate"])
+                assert heat["customdata"][i][j] == cell["students"]
+                assert heat["text"][i][j] == f"{cell['at_risk_rate']:.0%}"
+
+
+def test_heatmap_hides_small_cells_and_their_size(synthetic_env, matrix):
+    from sar.service import views
+
+    small = matrix[~((matrix["code_module"] == "AAA") & (matrix["code_presentation"] == "2013B"))]
+    keep = (small["code_module"] == "BBB") & (small["code_presentation"] == "2013J")
+    small = pd.concat([small[~keep], small[keep].head(7)])
+    small.to_csv(synthetic_env / "data" / "processed" / "day30_feature_matrix.csv", index=False)
+    at = _go(AppTest.from_file(APP, default_timeout=120).run(), "Modules")
+    assert not at.exception
+    specs = {s["layout"]["title"]["text"]: s for s in _chart_specs(at) if s["layout"].get("title")}
+    table = views.at_risk_by_module_and_presentation(small)
+    assert table["suppressed"].sum() == 2
+    _assert_heatmap_matches(specs, table)
 
 
 def test_support_page_counts_the_primary_suggestion_of_each_flagged_student(synthetic_env, matrix, small_final):
@@ -756,11 +858,14 @@ def test_support_page_counts_the_primary_suggestion_of_each_flagged_student(synt
     for name, (title, _) in INTERVENTIONS.items():
         assert (priority.never_first(name) in text) == (counts[title] == 0)
     flagged = int(counts.sum())
-    top = counts.drop(priority.NO_SUPPORT).idxmax()
+    top = counts.drop(list(priority.NOT_A_TYPE)).idxmax()
     assert ("Most flagged students" in text) == (counts[top] > flagged / 2)
     specs = {s["layout"]["title"]["text"]: s for s in _chart_specs(at)}
     by_module = specs["Primary suggestion by module"]
-    assert sum(sum(t["y"]) for t in by_module["data"]) == int(counts.drop(priority.NO_SUPPORT).sum())
+    assert sum(sum(t["y"]) for t in by_module["data"]) == int(counts.drop(list(priority.NOT_A_TYPE)).sum())
+    for spec in specs.values():                                   # legend beside the plot, never under the title
+        legend = spec["layout"].get("legend", {})
+        assert legend.get("orientation") == "v" and legend.get("x", 0) > 1 and legend.get("xanchor") == "left"
     colours = {t["marker"]["color"] for t in by_module["data"]}
     colours |= set(specs["Primary suggestion among flagged students"]["data"][0]["marker"]["color"])
     assert not colours & {"#ff5d73", "#ffb454", "#35d0ba"}                     # never a band colour

@@ -341,3 +341,51 @@ def test_band_outcome_uses_the_module_and_falls_back_when_small(matrix, small_fi
     rate, n, scope = views.band_outcome(pd.concat([tiny, scored[scored["code_module"] != "AAA"]]), "AAA",
                                         str(tiny["band"].iloc[0]))
     assert scope == "All modules" and n >= views.MIN_CELL
+
+
+def test_priority_export_adds_the_calibrated_score_after_the_band(matrix, small_final):
+    from sar.config import PROTECTED_FEATURES
+
+    scored = views.score_presentation(small_final[0], matrix, "2014J")
+    flagged = scored[views.flag_capacity(scored, 0.5).flagged].sort_values("rank")
+    listing = pd.DataFrame({"Rank": range(1, len(flagged) + 1), "Student ID": flagged["id_student"].astype(str),
+                            "Module": flagged["code_module"], "Risk band": flagged["band"].astype(str),
+                            "Day 30 snapshot": "", "Main reason": "", "Suggested support": ""})
+    reasons = [f"reason {i}" for i in range(len(flagged))]
+    export = views.priority_export(listing, flagged["score"], "validation (2014J)", reasons)
+    assert list(export.columns) == ["Rank", "Student ID", "Module", "Risk band", "Calibrated score",
+                                    "Day 30 snapshot", "Main reason", "Suggested support", "Reason for support",
+                                    "score_source"]
+    assert list(export["Reason for support"]) == reasons
+    assert not set(PROTECTED_FEATURES) & set(export.columns)
+    got = export["Calibrated score"]
+    assert got.between(0, 1).all() and (got == got.round(3)).all()
+    assert got.to_numpy() == pytest.approx(flagged["score"].to_numpy(), abs=5e-4)
+    assert export["Risk band"].nunique() > 1                                # bands checked below, more than one
+    edges = dict(views.risk_band_edges(small_final[0]["cutoffs"]))
+    upper = {"Low": edges["Medium"], "Medium": edges["High"], "High": 1.0}
+    for band, score in zip(export["Risk band"], got):
+        assert edges[band] - 5e-4 <= score <= upper[band] + 5e-4, (band, score)
+    assert list(views.assign_risk_band(flagged["score"], small_final[0]["cutoffs"]).astype(str)) == list(
+        export["Risk band"])
+
+
+def test_at_risk_by_module_and_presentation_covers_every_pair_and_hides_small_ones(matrix):
+    table = views.at_risk_by_module_and_presentation(matrix)
+    modules, intakes = sorted(matrix["code_module"].unique()), sorted(matrix["code_presentation"].unique())
+    assert list(zip(table["code_module"], table["code_presentation"])) == [(m, p) for m in modules for p in intakes]
+    assert table["students"].sum() == len(matrix)
+    for _, row in table.iterrows():
+        part = matrix[(matrix["code_module"] == row["code_module"])
+                      & (matrix["code_presentation"] == row["code_presentation"])]
+        assert row["students"] == len(part) and row["suppressed"] == (len(part) < views.MIN_CELL)
+        if len(part) >= views.MIN_CELL:
+            assert row["at_risk_rate"] == pytest.approx(part["at_risk"].mean())
+    # a small cell and a module that did not run in an intake are both suppressed, with no rate
+    small = matrix[~((matrix["code_module"] == "AAA") & (matrix["code_presentation"] == "2013B"))]
+    small = pd.concat([small[~((small["code_module"] == "BBB") & (small["code_presentation"] == "2014J"))],
+                       small[(small["code_module"] == "BBB") & (small["code_presentation"] == "2014J")].head(5)])
+    cells = views.at_risk_by_module_and_presentation(small).set_index(["code_module", "code_presentation"])
+    assert cells.loc[("AAA", "2013B"), "students"] == 0 and cells.loc[("BBB", "2014J"), "students"] == 5
+    for key in [("AAA", "2013B"), ("BBB", "2014J")]:
+        assert cells.loc[key, "suppressed"] and np.isnan(cells.loc[key, "at_risk_rate"])

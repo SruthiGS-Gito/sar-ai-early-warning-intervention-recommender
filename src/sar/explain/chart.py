@@ -12,6 +12,7 @@ import math
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from sar.rounding import fixed
 from sar.viz.plots import AT_RISK, CATEGORY_LABELS, FEATURE_LABELS, NEUTRAL, ON_TRACK, _clean, save_fig
 
 COURSE_COLOUR = "#DD8452"
@@ -25,7 +26,7 @@ def _fmt(v) -> str:
     if v is None or (isinstance(v, float) and math.isnan(v)):
         return "none yet"
     if isinstance(v, (int, float)):
-        return f"{v:,.0f}" if float(v).is_integer() or abs(v) >= 100 else f"{v:,.1f}"
+        return fixed(v, 0 if float(v).is_integer() or abs(v) >= 100 else 1, grouping=True)
     return str(v)
 
 
@@ -87,11 +88,12 @@ def plot_explanation(expl, n: int = 8, save: bool = False, name: str = "student_
 
 
 def explanation_table(expl) -> pd.DataFrame:
-    """The contributions as a table for display: label, value, contribution, group."""
+    """The contributions as a table for display: label, value, contribution (unrounded, so that a display
+    rounds it once), group."""
     c = expl.contributions
     return pd.DataFrame({
         "Input": [short_label(f) for f in c.index],
         "Value": [_fmt(v) for v in c["value"]],
-        "Change in score": c["contribution"].round(4).values,
+        "Change in score": c["contribution"].to_numpy(dtype=float),
         "Group": c["group"].values,
     }).sort_values("Change in score", key=abs, ascending=False, ignore_index=True)

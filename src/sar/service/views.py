@@ -22,6 +22,7 @@ import pandas as pd
 from sar.config import RISK_BANDS
 from sar.data.split import TEST_PRESENTATION
 from sar.models.final import predict, reliability
+from sar.rounding import round_half_up
 
 KEY = ["code_module", "code_presentation", "id_student"]
 MIN_CELL = 20
@@ -116,6 +117,22 @@ class FlagOutcome:
     @property
     def recall(self) -> float:
         return self.caught / self.at_risk if self.at_risk else float("nan")
+
+
+EXPORT_SCORE = "Calibrated score"
+EXPORT_SUPPORT_REASON = "Reason for support"
+
+
+def priority_export(listing: pd.DataFrame, scores, source: str, support_reasons=None) -> pd.DataFrame:
+    """The priority list as downloaded: the listed columns, the calibrated score to three decimals placed
+    after "Risk band", the primary suggestion's own reason placed after "Suggested support" (when
+    `support_reasons` is given), and the score source. `scores` and `support_reasons` hold one value per listed
+    row, in order."""
+    out = listing.reset_index(drop=True)
+    out.insert(out.columns.get_loc("Risk band") + 1, EXPORT_SCORE, [round_half_up(s, 3) for s in scores])
+    if support_reasons is not None:
+        out.insert(out.columns.get_loc("Suggested support") + 1, EXPORT_SUPPORT_REASON, list(support_reasons))
+    return out.assign(score_source=source)
 
 
 def flag_outcome(scored: pd.DataFrame, flagged) -> FlagOutcome:
@@ -243,6 +260,19 @@ def at_risk_by_presentation(matrix: pd.DataFrame, module: str | None = None) -> 
     """Observed at-risk rate per presentation (intake), in presentation order, for one module or all."""
     part = matrix if module is None else matrix[matrix["code_module"] == module]
     return _rates(part.groupby("code_presentation")).sort_values("code_presentation").reset_index(drop=True)
+
+
+def at_risk_by_module_and_presentation(matrix: pd.DataFrame) -> pd.DataFrame:
+    """Observed at-risk (Fail or Withdrawn) rate for every module and presentation (intake) of the matrix, from
+    final outcomes, not model scores. Every pair is listed, modules then presentations in order; a module that
+    did not run in a presentation has zero students. Pairs under MIN_CELL students are suppressed (NaN rate)."""
+    grid = pd.MultiIndex.from_product([sorted(matrix["code_module"].unique()),
+                                       sorted(matrix["code_presentation"].unique())],
+                                      names=["code_module", "code_presentation"])
+    out = _rates(matrix.groupby(["code_module", "code_presentation"])).set_index(grid.names).reindex(grid)
+    out["students"] = out["students"].fillna(0).astype(int)
+    out["suppressed"] = out["students"] < MIN_CELL
+    return out.reset_index()
 
 
 def at_risk_by_activity(matrix: pd.DataFrame, presentation: str, module: str | None = None) -> pd.DataFrame:

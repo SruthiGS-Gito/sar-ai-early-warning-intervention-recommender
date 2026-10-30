@@ -55,7 +55,7 @@ Details: [docs/app.md](docs/app.md).
 
 ## How to run
 
-Requires Python 3.10 or later (`pyproject.toml`); the committed results were produced with Python 3.12.10.
+Requires Python 3.12 or later (`pyproject.toml`), because shap 0.54.1 and numpy 2.5.3 do; the committed results were produced with Python 3.12.10. `requirements.txt` pins scikit-learn, pandas and numpy to the versions recorded in `models/final/config.json`, so that the saved model loads with the libraries it was trained with.
 
 ```
 git clone https://github.com/SruthiGS-Gito/sar-ai-early-warning-intervention-recommender.git
