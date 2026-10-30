@@ -21,8 +21,13 @@ APP = ROOT / "app" / "streamlit_app.py"
 DATA_REPO = "SruthiGS-Gito/sar-deploy-data"
 FILES = {
     "day30_feature_matrix.csv": ROOT / "data" / "processed" / "day30_feature_matrix.csv",
+    "department_risk.csv": ROOT / "data" / "processed" / "department_risk.csv",
+    "retention_funnel.csv": ROOT / "data" / "processed" / "retention_funnel.csv",
+    "student_profiles.csv": ROOT / "data" / "processed" / "student_profiles.csv",
     "model.joblib": ROOT / "models" / "final" / "model.joblib",
     "calibrator.joblib": ROOT / "models" / "final" / "calibrator.joblib",
+    "shap/2014J.parquet": ROOT / "models" / "final" / "shap" / "2014J.parquet",
+    "shap/2014J.json": ROOT / "models" / "final" / "shap" / "2014J.json",
 }
 
 # The page configuration must be the first Streamlit command, and the application sets it as well. Set it here with the
