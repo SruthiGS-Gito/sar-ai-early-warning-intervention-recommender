@@ -1,5 +1,7 @@
 # Student Academic Risk Early Warning and Intervention Recommender
 
+# Deployment Link : "https://sar-ai-early-warning-intervention-recommender-npyxjvxclhdotz8b.streamlit.app/"
+
 TrackGenesis internship project 8 (team 8). The system scores every enrolled student on Day 30 of a module, using only records dated on or before that day, and ranks students by calibrated risk of failing or withdrawing. Each flagged student receives a risk band, a plain-language explanation and a rule-based support suggestion, and a local Streamlit application presents the results for a support team with a fixed contact capacity.
 
 The full write-up is in [docs/final_report.md](docs/final_report.md).
